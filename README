@@ -9,12 +9,12 @@ For full WevDAV support in NGINX you need to turn on standard NGINX
 WebDAV module (providing partial WebDAV implementation) as well as 
 this module for missing methods
 
-../configure --with-http_dav_module --add-module=<path-to-this-module>/nginx-dav-ext-module
+../configure --with-http_dav_module --add-module=<path-to-this-module>
 
 
 
 Requirements:
-	libexpact-dev
+	libexpat-dev
 
 
 Example config:
