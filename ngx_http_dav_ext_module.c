@@ -59,7 +59,7 @@ static ngx_conf_bitmask_t  ngx_http_dav_ext_methods_mask[] = {
 	{ ngx_string("off"),      NGX_HTTP_DAV_EXT_OFF },
 	{ ngx_string("propfind"), NGX_HTTP_PROPFIND    },
 	{ ngx_string("options"),  NGX_HTTP_OPTIONS     },
-	{ ngx_null_string, 0 }
+	{ ngx_null_string,        0                    }
 
 };
 
