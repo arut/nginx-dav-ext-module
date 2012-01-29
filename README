@@ -5,7 +5,7 @@ NGINX WebDAV missing commands support (PROPFIND & OPTIONS)
 (c) 2012 Arutyunyan Roman (arut@qip.ru)
 
 
-For full WevDAV support in NGINX you need to turn on standard NGINX 
+For full WebDAV support in NGINX you need to turn on standard NGINX 
 WebDAV module (providing partial WebDAV implementation) as well as 
 this module for missing methods
 
