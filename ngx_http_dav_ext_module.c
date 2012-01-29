@@ -296,7 +296,6 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 {
 	struct stat   st;
 	struct tm     stm;
-	time_t        t;
 	u_char        buf[256];
 	ngx_str_t     name;
 
@@ -310,14 +309,13 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 
 	if (props & NGX_HTTP_DAV_EXT_PROP_creationdate) {
 
-		t = time(0);
-
-		if (localtime_r(&t, &stm) == NULL)
+		/* output fie ctime (attr change time) as creation time */
+		if (gmtime_r(&st.st_ctime, &stm) == NULL)
 			return NGX_ERROR;
 
 		NGX_HTTP_DAV_EXT_OUTCB(buf, strftime((char*)buf, sizeof(buf), 
 						"<D:creationdate>"
-							"%a, %d %b %Y %H:%M:%S %z"
+							"%a, %d %b %Y %T %z"
 						"</D:creationdate>\n", 
 
 			&stm));
@@ -373,12 +371,13 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 
 	if (props & NGX_HTTP_DAV_EXT_PROP_getlastmodified) {
 
-		if (localtime_r(&st.st_mtime, &stm) == NULL)
+		if (gmtime_r(&st.st_mtime, &stm) == NULL)
 			return NGX_ERROR;
 
+		/* RFC 2822 time format */
 		NGX_HTTP_DAV_EXT_OUTCB(buf, strftime((char*)buf, sizeof(buf), 
 						"<D:getlastmodified>"
-							"%a, %d %b %Y %H:%M:%S %z"
+							"%a, %d %b %Y %T %z"
 						"</D:getlastmodified>\n", 
 
 			&stm));
