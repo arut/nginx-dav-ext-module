@@ -315,7 +315,7 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 
 		NGX_HTTP_DAV_EXT_OUTCB(buf, strftime((char*)buf, sizeof(buf), 
 						"<D:creationdate>"
-							"%a, %d %b %Y %T %z"
+							"%a, %d %b %Y %T GMT"
 						"</D:creationdate>\n", 
 
 			&stm));
@@ -351,10 +351,10 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 	if (props & NGX_HTTP_DAV_EXT_PROP_getcontentlength) {
 		NGX_HTTP_DAV_EXT_OUTCB(buf, ngx_snprintf(buf, sizeof(buf), 
 						"<D:getcontentlength>"
-							"%lld"
+							"%O"
 						"</D:getcontentlength>\n", 
 
-			(long long)st.st_size) - buf);
+			st.st_size) - buf);
 	}
 	
 	if (props & NGX_HTTP_DAV_EXT_PROP_getcontenttype) {
@@ -377,7 +377,7 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 		/* RFC 2822 time format */
 		NGX_HTTP_DAV_EXT_OUTCB(buf, strftime((char*)buf, sizeof(buf), 
 						"<D:getlastmodified>"
-							"%a, %d %b %Y %T %z"
+							"%a, %d %b %Y %T GMT"
 						"</D:getlastmodified>\n", 
 
 			&stm));
