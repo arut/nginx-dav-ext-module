@@ -25,5 +25,5 @@ Example config:
 		dav_methods PUT DELETE MKCOL COPY MOVE;
 		dav_ext_methods PROPFIND OPTIONS;
 
-		root /var/root;
+		root /var/root/;
 	}
