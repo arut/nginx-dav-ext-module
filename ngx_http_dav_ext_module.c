@@ -739,7 +739,7 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
 				return NGX_HTTP_INTERNAL_SERVER_ERROR;
 			}
 
-			/* FIXME: it looks ugly until I cannot access nginx dav module */
+			/* FIXME: it looks so ugly because I cannot access nginx dav module */
 			ngx_str_set(&h->key, "Allow");
 			ngx_str_set(&h->value, "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,PROPFIND,OPTIONS");
 			h->hash = 1;
