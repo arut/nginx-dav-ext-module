@@ -309,13 +309,15 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 
 	if (props & NGX_HTTP_DAV_EXT_PROP_creationdate) {
 
-		/* output fie ctime (attr change time) as creation time */
+		/* output file ctime (attr change time) as creation time */
 		if (gmtime_r(&st.st_ctime, &stm) == NULL)
 			return NGX_ERROR;
 
+		/* ISO 8601 time format
+		   2012-02-20T16:15:00Z */
 		NGX_HTTP_DAV_EXT_OUTCB(buf, strftime((char*)buf, sizeof(buf), 
 						"<D:creationdate>"
-							"%a, %d %b %Y %T GMT"
+							"%Y-%m-%dT%TZ"
 						"</D:creationdate>\n", 
 
 			&stm));
@@ -729,6 +731,17 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
 
 			ngx_str_set(&h->key, "DAV");
 			ngx_str_set(&h->value, "1");
+			h->hash = 1;
+
+			h = ngx_list_push(&r->headers_out.headers);
+
+			if (h == NULL) {
+				return NGX_HTTP_INTERNAL_SERVER_ERROR;
+			}
+
+			/* FIXME: it looks ugly until I cannot access nginx dav module */
+			ngx_str_set(&h->key, "Allow");
+			ngx_str_set(&h->value, "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,PROPFIND,OPTIONS");
 			h->hash = 1;
 
 			r->headers_out.status = NGX_HTTP_OK;
