@@ -301,7 +301,7 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 
 	if (stat(path, &st)) {
 
-		ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
+		ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno,
 				"dav_ext stat failed on '%s'", path);
 
 		return NGX_HTTP_NOT_FOUND;
