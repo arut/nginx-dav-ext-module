@@ -36,11 +36,136 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-#include <sys/types.h>
+#if defined(_WIN32)
+typedef long   _off_t;  /* for stat structures */
+#endif
+
+#include <sys/stat.h>
+
+#if !defined(_WIN32)
 #include <dirent.h>
+#endif
+
 #include <time.h>
 
+#define USE_EXPAT_STATIC
+
+#if defined(_WIN32)
+
+#include <stdio.h>
+
+#if defined(USE_EXPAT_STATIC)
+
+#if defined(_MSC_EXTENSIONS)
+#undef _MSC_EXTENSIONS
+#endif
+#pragma comment (lib, "libexpatMT.lib")
+#else	//USE_EXPAT_STATIC
+#pragma comment (lib, "libexpat.lib")
+#endif	//USE_EXPAT_STATIC
+
+#endif //_WIN32
+
 #include <expat.h>
+
+////////////////////////////////////////////////////////////////////////
+// dirent declarations
+////////////////////////////////////////////////////////////////////////
+#if defined(_WIN32)
+#include <errno.h>
+
+#if !defined(FILE_ATTRIBUTE_DEVICE)
+# define FILE_ATTRIBUTE_DEVICE 0x40
+#endif
+
+#define S_IFBLK   0                            /* block device */
+#define S_IFLNK   0                            /* link */
+#define S_IFSOCK  0                            /* socket */
+
+#define S_IRUSR  S_IREAD                       /* read, user */
+#define S_IWUSR  S_IWRITE                      /* write, user */
+#define S_IXUSR  0                             /* execute, user */
+#define S_IRGRP  0                             /* read, group */
+#define S_IWGRP  0                             /* write, group */
+#define S_IXGRP  0                             /* execute, group */
+#define S_IROTH  0                             /* read, others */
+#define S_IWOTH  0                             /* write, others */
+#define S_IXOTH  0                             /* execute, others */
+
+
+/* Indicates that d_type field is available in dirent structure */
+#define _DIRENT_HAVE_D_TYPE
+
+/* File type flags for d_type */
+#define DT_UNKNOWN  0
+#define DT_REG      S_IFREG
+#define DT_DIR      S_IFDIR
+#define DT_FIFO     S_IFFIFO
+#define DT_SOCK     S_IFSOCK
+#define DT_CHR      S_IFCHR
+#define DT_BLK      S_IFBLK
+
+/* Macros for converting between st_mode and d_type */
+#define IFTODT(mode) ((mode) & S_IFMT)
+#define DTTOIF(type) (type)
+
+/*
+ * File type macros.  Note that block devices, sockets and links cannot be
+ * distinguished on Windows and the macros S_ISBLK, S_ISSOCK and S_ISLNK are
+ * only defined for compatibility.  These macros should always return false
+ * on Windows.
+ */
+#define	S_ISFIFO(mode) (((mode) & S_IFMT) == S_IFFIFO)
+#define	S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
+#define	S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
+#define	S_ISLNK(mode)  (((mode) & S_IFMT) == S_IFLNK)
+#define	S_ISSOCK(mode) (((mode) & S_IFMT) == S_IFSOCK)
+#define	S_ISCHR(mode)  (((mode) & S_IFMT) == S_IFCHR)
+#define	S_ISBLK(mode)  (((mode) & S_IFMT) == S_IFBLK)
+
+typedef struct dirent
+{
+   char d_name[MAX_PATH + 1];                  /* File name */
+   size_t d_namlen;                            /* Length of name without \0 */
+   int d_type;                                 /* File type */
+} dirent;
+
+
+typedef struct DIR
+{
+   dirent           curentry;                  /* Current directory entry */
+   WIN32_FIND_DATAA find_data;                 /* Private file data */
+   int              cached;                    /* True if data is valid */
+   HANDLE           search_handle;             /* Win32 search handle */
+   char             patt[MAX_PATH + 3];        /* Initial directory name */
+} DIR;
+
+/* Use the new safe string functions introduced in Visual Studio 2005 */
+#if defined(_MSC_VER) && _MSC_VER >= 1400
+# define DIRENT_STRNCPY(dest,src,size) strncpy_s((dest),(size),(src),_TRUNCATE)
+#else
+# define DIRENT_STRNCPY(dest,src,size) strncpy((dest),(src),(size))
+#endif
+
+/* Set errno variable */
+#if defined(_MSC_VER)
+#define DIRENT_SET_ERRNO(x) _set_errno (x)
+#else
+#define DIRENT_SET_ERRNO(x) (errno = (x))
+#endif
+
+/* Forward declarations */
+static DIR *opendir(const char *dirname);
+static struct dirent *readdir(DIR *dirp);
+static int closedir(DIR *dirp);
+
+static struct tm* gmtime_r(const time_t *clock, struct tm *result)
+{
+	return gmtime_s(result,clock)?NULL:result; 
+}
+
+#endif
+
 
 #define NGX_HTTP_DAV_EXT_OFF             2
 
@@ -214,11 +339,14 @@ ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
 	ngx_int_t flags, u_char *data, ngx_uint_t len) 
 {
 	ngx_chain_t *cl;
-	ngx_buf_t   *b;
+	ngx_buf_t   *b;	
+
+	//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "ngx_http_dav_ext_output entered.");
 
 	if (!len) {
+		//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "FUCK!!!.");
 		return; 
-	}
+	}	
 
 	if (flags & NGX_HTTP_DAV_EXT_ESCAPE) {
 
@@ -258,6 +386,7 @@ static void
 ngx_http_dav_ext_flush(ngx_http_request_t *r, ngx_chain_t **ll)
 {
 	ngx_chain_t *cl;
+	//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "ngx_http_dav_ext_flush entered.");
 
 	cl = (*ll)->next;
 	(*ll)->next = NULL;
@@ -290,34 +419,61 @@ ngx_http_dav_ext_flush(ngx_http_request_t *r, ngx_chain_t **ll)
 #define NGX_HTTP_DAV_EXT_OUTL(s) \
 	ngx_http_dav_ext_output(r, ll, 0, (u_char*)(s), sizeof(s) - 1)
 
+static int
+cross_stat ( ngx_str_t* name, struct stat *st )
+{
+#if defined(_WIN32)
+	char *begin		= (char*)name->data;		
+	char *current	= begin;		
+	while (*current)
+	{
+		if (*current=='/')
+			*current='\\';
+		current++;
+	}
+	while ((current != begin) && (*(current-1)=='\\') )
+	{
+		*(current-1)=0;
+		current --;
+	}	
+	name->len = current - begin;
+#endif
+	return stat((char*)name->data,st);
+}
+
 static ngx_int_t
 ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r, 
-	char *path, ngx_str_t *uri, ngx_chain_t **ll, ngx_uint_t props)
+	ngx_str_t* path, ngx_str_t *uri, ngx_chain_t **ll, ngx_uint_t props)
 {
 	struct stat   st;
 	struct tm     stm;
 	u_char        buf[256];
 	ngx_str_t     name;
+	//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "ngx_http_dav_ext_send_propfind_atts(\"%s\") entered.", path);
 
-	if (stat(path, &st)) {
+	if (cross_stat(path, &st)) {
 
 		ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno,
 				"dav_ext stat failed on '%s'", path);
 
 		return NGX_HTTP_NOT_FOUND;
-	}
+	}	
 
 	if (props & NGX_HTTP_DAV_EXT_PROP_creationdate) {
 
 		/* output file ctime (attr change time) as creation time */
 		if (gmtime_r(&st.st_ctime, &stm) == NULL)
+		{
+			ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno,
+				"dav_ext gmtime_r failed");
 			return NGX_ERROR;
+		}
 
 		/* ISO 8601 time format
 		   2012-02-20T16:15:00Z */
 		NGX_HTTP_DAV_EXT_OUTCB(buf, strftime((char*)buf, sizeof(buf), 
 						"<D:creationdate>"
-							"%Y-%m-%dT%TZ"
+							"%Y-%m-%dT%H:%M:%SZ"
 						"</D:creationdate>\n", 
 
 			&stm));
@@ -351,11 +507,13 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 	}
 
 	if (props & NGX_HTTP_DAV_EXT_PROP_getcontentlength) {
-		NGX_HTTP_DAV_EXT_OUTCB(buf, ngx_snprintf(buf, sizeof(buf), 
+		NGX_HTTP_DAV_EXT_OUTCB(
+			buf,
+			ngx_snprintf(buf, 
+						sizeof(buf), 
 						"<D:getcontentlength>"
-							"%O"
+						"%d"
 						"</D:getcontentlength>\n", 
-
 			st.st_size) - buf);
 	}
 	
@@ -374,12 +532,16 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 	if (props & NGX_HTTP_DAV_EXT_PROP_getlastmodified) {
 
 		if (gmtime_r(&st.st_mtime, &stm) == NULL)
+		{
+			ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno,
+				"dav_ext gmtime_r failed");
 			return NGX_ERROR;
+		}		
 
 		/* RFC 2822 time format */
 		NGX_HTTP_DAV_EXT_OUTCB(buf, strftime((char*)buf, sizeof(buf), 
 						"<D:getlastmodified>"
-							"%a, %d %b %Y %T GMT"
+							"%a, %d %b %Y %H:%M:%S GMT"
 						"</D:getlastmodified>\n", 
 
 			&stm));
@@ -392,13 +554,17 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 	}
 
 	if (props & NGX_HTTP_DAV_EXT_PROP_resourcetype) {
-		if (S_ISDIR(st.st_mode)) {
+		//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "mode %d", st.st_mode);
+		if (S_ISDIR(st.st_mode)) 
+		{
+			//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "isdir %X", st.st_mode);
 			NGX_HTTP_DAV_EXT_OUTL(
 						"<D:resourcetype>"
 							"<D:collection/>"
 						"</D:resourcetype>\n"
 				);
 		} else {
+			//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "isdata %X", st.st_mode);
 			NGX_HTTP_DAV_EXT_OUTL(
 						"<D:resourcetype/>\n"
 				);
@@ -422,12 +588,14 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 				
 static ngx_int_t
 ngx_http_dav_ext_send_propfind_item(ngx_http_request_t *r, 
-	char *path, ngx_str_t *uri)
+	ngx_str_t* path, ngx_str_t *uri)
 {
 	ngx_http_dav_ext_ctx_t *ctx;
 	ngx_chain_t            *l = NULL, **ll = &l;
 	u_char                 vbuf[8];
 	ngx_str_t              status_line = ngx_string("200 OK");
+
+	//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "ngx_http_dav_ext_send_propfind_item(\"%s\",\"%s\") entered.", path,uri->data);
 
 	ctx = ngx_http_get_module_ctx(r, ngx_http_dav_ext_module);
 
@@ -459,9 +627,10 @@ ngx_http_dav_ext_send_propfind_item(ngx_http_request_t *r,
 						"<D:source/>\n"
 						"<D:supportedlock/>\n"
 			);
+		//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "!!!!!!!!!!.");
 
 	} else {
-
+		
 		switch (ngx_http_dav_ext_send_propfind_atts(r, path, uri, ll,
 				ctx->propfind == NGX_HTTP_DAV_EXT_PROPFIND_SELECTED ? 
 				ctx->props : (ngx_uint_t)-1))
@@ -487,6 +656,7 @@ ngx_http_dav_ext_send_propfind_item(ngx_http_request_t *r,
 	NGX_HTTP_DAV_EXT_OUTCB(vbuf, ngx_snprintf(vbuf, sizeof(vbuf), "%d.%d ", 
 			r->http_major, r->http_minor) - vbuf);
 
+	//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "%s", status_line.data);
 	NGX_HTTP_DAV_EXT_OUTS(&status_line);
 
 	NGX_HTTP_DAV_EXT_OUTL(
@@ -534,6 +704,8 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 	ngx_str_t                 depth_name = ngx_string("depth");
 	u_char                    *p;
 
+	//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "ngx_http_dav_ext_send_propfind entered.");
+
 	if (ngx_http_variable_unknown_header(&vv, &depth_name, 
 					&r->headers_in.headers.part, 0) == NGX_OK
 		&& vv.valid)
@@ -549,6 +721,8 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 	} else {
 		depth = DAV_EXT_INFINITY;
 	}
+
+	//ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno, "depth = '%d'", depth );
 
 	p = ngx_http_map_uri_to_path(r, &path, &root, 0);
 
@@ -573,15 +747,26 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 
 	ngx_http_dav_ext_flush(r, ll);
 
-	ngx_http_dav_ext_send_propfind_item(r, (char*)path.data, &r->uri);
+	ngx_http_dav_ext_send_propfind_item(r, &path, &r->uri);
 
 	if (depth) {
 
 		/* treat infinite depth as 1 for performance reasons */
+		dir = opendir((char*)path.data);
+		//ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno, "opendir(\"%s\")", path.data );
+		if (dir) {
+			
+			//ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno, "opened" );
+			while(1) {
 
-		if ((dir = opendir((char*)path.data))) {
-
-			while((de = readdir(dir))) {
+				de = readdir(dir);
+				//ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno, "readdir()" );
+				if ( !de )
+				{
+					//ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno, "empty result" );
+					break;
+				}
+				//ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno, "de->d_name = %s", de->d_name );
 
 				if (!strcmp(de->d_name, ".")
 					|| !strcmp(de->d_name, ".."))
@@ -597,7 +782,10 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 				ngx_http_dav_ext_make_child(r->pool, &r->uri, 
 					(u_char*)de->d_name, len, &suri);
 
-				ngx_http_dav_ext_send_propfind_item(r, (char*)spath.data, &suri);
+				//ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno, "spath = %s", spath.data );
+				//ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno, "suri = %s", suri.data );
+
+				ngx_http_dav_ext_send_propfind_item(r, &spath, &suri);
 
 			}
 
@@ -628,6 +816,8 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 	ngx_uint_t              status;
 	ngx_http_dav_ext_ctx_t *ctx;
 
+	//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "ngx_http_dav_ext_propfind_handler entered.");
+
 	ctx = ngx_http_get_module_ctx(r, ngx_http_dav_ext_module);
 
 	if (ctx == NULL) {
@@ -656,7 +846,7 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 			ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
 					"dav_ext propfind XML error");
 
-			status = NGX_ERROR;
+			status = (ngx_uint_t)NGX_ERROR;
 
 			break;
 		}
@@ -668,7 +858,7 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 	if (status == NGX_OK) {
 
 		r->headers_out.status = 207;
-
+		
 		ngx_str_set(&r->headers_out.status_line, "207 Multi-Status");
 
 		ngx_http_send_header(r);
@@ -687,6 +877,8 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 
 	}
 
+	//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "%s %d", r->headers_out.status_line.data, r->headers_out.status);
+
 }
 
 static ngx_int_t
@@ -695,6 +887,8 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
 	ngx_int_t                    rc;
 	ngx_table_elt_t              *h;
 	ngx_http_dav_ext_loc_conf_t  *delcf;
+
+	//ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "ngx_http_dav_ext_handler entered.");
 		    
 	delcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
 
@@ -801,3 +995,155 @@ ngx_http_dav_ext_init(ngx_conf_t *cf)
 	return NGX_OK;
 }
 
+////////////////////////////////////////////////////////////////////////
+// dirent impllementation
+////////////////////////////////////////////////////////////////////////
+#if defined(_WIN32)
+
+/*****************************************************************************
+ * Open directory stream DIRNAME for read and return a pointer to the
+ * internal working area that is used to retrieve individual directory
+ * entries.
+ */
+static DIR *opendir(const char *dirname)
+{
+   DIR *dirp;
+
+   /* ensure that the resulting search pattern will be a valid file name */
+   if (dirname == NULL) {
+      DIRENT_SET_ERRNO (ENOENT);
+      return NULL;
+   }
+   if (strlen (dirname) + 3 >= MAX_PATH) {
+      DIRENT_SET_ERRNO (ENAMETOOLONG);
+      return NULL;
+   }
+
+   /* construct new DIR structure */
+   dirp = (DIR*) malloc (sizeof (struct DIR));
+   if (dirp != NULL) {
+      int error;
+
+      /*
+       * Convert relative directory name to an absolute one.  This
+       * allows rewinddir() to function correctly when the current working
+       * directory is changed between opendir() and rewinddir().
+       */
+      if (GetFullPathNameA (dirname, MAX_PATH, dirp->patt, NULL)) {
+         char *p;
+
+         /* append the search pattern "\\*\0" to the directory name */
+         p = strchr (dirp->patt, '\0');
+         if (dirp->patt < p  &&  *(p-1) != '\\'  &&  *(p-1) != ':') {
+           *p++ = '\\';
+         }
+         *p++ = '*';
+         *p = '\0';
+
+         /* open directory stream and retrieve the first entry */
+         dirp->search_handle = FindFirstFileA (dirp->patt, &dirp->find_data);
+         if (dirp->search_handle != INVALID_HANDLE_VALUE) {
+            /* a directory entry is now waiting in memory */
+            dirp->cached = 1;
+            error = 0;
+         } else {
+            /* search pattern is not a directory name? */
+            DIRENT_SET_ERRNO (ENOENT);
+            error = 1;
+         }
+      } else {
+         /* buffer too small */
+         DIRENT_SET_ERRNO (ENOMEM);
+         error = 1;
+      }
+
+      if (error) {
+         free (dirp);
+         dirp = NULL;
+      }
+   }
+
+   return dirp;
+}
+
+
+/*****************************************************************************
+ * Read a directory entry, and return a pointer to a dirent structure
+ * containing the name of the entry in d_name field.  Individual directory
+ * entries returned by this very function include regular files,
+ * sub-directories, pseudo-directories "." and "..", but also volume labels,
+ * hidden files and system files may be returned.
+ */
+static struct dirent *readdir(DIR *dirp)
+{
+   DWORD attr;
+   if (dirp == NULL) {
+      /* directory stream did not open */
+      DIRENT_SET_ERRNO (EBADF);
+      return NULL;
+   }
+
+   /* get next directory entry */
+   if (dirp->cached != 0) {
+      /* a valid directory entry already in memory */
+      dirp->cached = 0;
+   } else {
+      /* get the next directory entry from stream */
+      if (dirp->search_handle == INVALID_HANDLE_VALUE) {
+         return NULL;
+      }
+      if (FindNextFileA (dirp->search_handle, &dirp->find_data) == FALSE) {
+         /* the very last entry has been processed or an error occured */
+         FindClose (dirp->search_handle);
+         dirp->search_handle = INVALID_HANDLE_VALUE;
+         return NULL;
+      }
+   }
+
+   /* copy as a multibyte character string */
+   DIRENT_STRNCPY ( dirp->curentry.d_name,
+             dirp->find_data.cFileName,
+             sizeof(dirp->curentry.d_name) );
+   dirp->curentry.d_name[MAX_PATH] = '\0';
+
+   /* compute the length of name */
+   dirp->curentry.d_namlen = strlen (dirp->curentry.d_name);
+
+   /* determine file type */
+   attr = dirp->find_data.dwFileAttributes;
+   if ((attr & FILE_ATTRIBUTE_DEVICE) != 0) {
+      dirp->curentry.d_type = DT_CHR;
+   } else if ((attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+      dirp->curentry.d_type = DT_DIR;
+   } else {
+      dirp->curentry.d_type = DT_REG;
+   }
+   return &dirp->curentry;
+}
+
+
+/*****************************************************************************
+ * Close directory stream opened by opendir() function.  Close of the
+ * directory stream invalidates the DIR structure as well as any previously
+ * read directory entry.
+ */
+static int closedir(DIR *dirp)
+{
+   if (dirp == NULL) {
+      /* invalid directory stream */
+      DIRENT_SET_ERRNO (EBADF);
+      return -1;
+   }
+
+   /* release search handle */
+   if (dirp->search_handle != INVALID_HANDLE_VALUE) {
+      FindClose (dirp->search_handle);
+      dirp->search_handle = INVALID_HANDLE_VALUE;
+   }
+
+   /* release directory structure */
+   free (dirp);
+   return 0;
+}
+
+#endif
