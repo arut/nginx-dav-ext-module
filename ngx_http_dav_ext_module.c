@@ -41,26 +41,37 @@
 #include <expat.h>
 
 
-typedef struct ngx_http_dav_ext_lock_s ngx_http_dav_ext_lock_t;
+#define NGX_HTTP_DAV_EXT_LOCK_ZONE  "dav-ext-zone"
+#define NGX_HTTP_DAV_EXT_LOCK_SIZE  65536
 
-typedef struct ngx_http_dav_ext_lock_s {
-    ngx_pool_t                     *pool;
-    ngx_str_t                       uri;
+
+typedef struct {
+    ngx_rbtree_node_t               node;
+    ngx_str_t                       path;
+    ngx_int_t                       depth;
     ngx_str_t                       user;
-    ngx_str_t                       owner;
+    time_t                          expire;
     ngx_str_t                       token;
-    ngx_int_t                       timeout;    /* -1 is infinity */
-    ngx_int_t                       depth;      /* -1 is infinity */
-    ngx_event_t                     expire;
-    ngx_http_dav_ext_lock_t        *next;
-};
+} ngx_http_dav_ext_lock_t;
+
+
+typedef struct {
+    ngx_rbtree_t                    rbtree;
+    ngx_rbtree_node_t               sentinel;
+} ngx_http_dav_ext_cache_sh_t;
+
+
+typedef struct {
+    ngx_http_dav_ext_cache_sh_t    *sh;
+    ngx_slab_pool_t                *shpool;
+    ngx_shm_zone_t                 *shm_zone;
+} ngx_http_dav_ext_cache_t;
 
 
 typedef struct {
     ngx_uint_t                      methods;
-    size_t                          lock_nbuckets;
-    ngx_http_dav_ext_lock_t       **lock_buckets;
     ngx_log_t                      *log;
+    ngx_http_dav_ext_cache_t       *cache;
 } ngx_http_dav_ext_loc_conf_t;
 
 
@@ -76,6 +87,17 @@ typedef struct {
     ngx_uint_t                      lock_type;
     ngx_str_t                       lock_owner;
 } ngx_http_dav_ext_ctx_t;
+
+
+static ngx_http_dav_ext_lock_t *
+    ngx_http_dav_ext_get_lock(ngx_http_dav_ext_cache_t *cache, 
+    ngx_str_t *path);
+static void ngx_http_dav_ext_rbtree_insert_lock(ngx_rbtree_node_t *temp,
+    ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel);
+static void ngx_http_dav_ext_delete_lock(ngx_http_dav_ext_cache_t *cache,
+    ngx_http_dav_ext_lock_t *lock);
+static ngx_int_t ngx_http_dav_ext_add_lock(ngx_http_dav_ext_cache_t *cache,
+    ngx_http_dav_ext_lock_t *lock);
 
 
 #define NGX_HTTP_DAV_EXT_NODE_propfind              0x0001
@@ -106,9 +128,8 @@ typedef struct {
 #define NGX_HTTP_DAV_EXT_PROPFIND_NAMES             2
 #define NGX_HTTP_DAV_EXT_PROPFIND_ALL               3
 
-#define NGX_HTTP_DAV_EXT_NODE_exclusive             1
-#define NGX_HTTP_DAV_EXT_NODE_write                 1
-
+#define NGX_HTTP_DAV_EXT_EXCLUSIVE                  1
+#define NGX_HTTP_DAV_EXT_WRITE                      1
 
 #define NGX_HTTP_DAV_EXT_TIMEOUT                    300
 
@@ -141,13 +162,6 @@ static ngx_command_t  ngx_http_dav_ext_commands[] = {
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_dav_ext_loc_conf_t, methods),
         &ngx_http_dav_ext_methods_mask },
-
-    { ngx_string("dav_ext_lock_buckets"),
-        NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
-        ngx_conf_set_size_slot,
-        NGX_HTTP_LOC_CONF_OFFSET,
-        offsetof(ngx_http_dav_ext_loc_conf_t, lock_nbuckets),
-        NULL },
 
     ngx_null_command
 };
@@ -184,6 +198,212 @@ ngx_module_t  ngx_http_dav_ext_module = {
 };
 
 
+static void
+ngx_http_dav_ext_delete_lock(ngx_http_dav_ext_cache_t *cache, 
+    ngx_http_dav_ext_lock_t *lock)
+{
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
+                   "dav_ext: deleting lock for '%V'", &lock->path);
+
+    ngx_shmtx_lock(&cache->shpool->mutex);
+
+    ngx_rbtree_delete(&cache->sh->rbtree, &lock->node);
+    ngx_slab_free_locked(cache->shpool, lock);
+
+    ngx_shmtx_unlock(&cache->shpool->mutex);
+}
+
+
+static ngx_int_t
+ngx_http_dav_ext_add_lock(ngx_http_dav_ext_cache_t *cache,
+    ngx_http_dav_ext_lock_t *lock)
+{
+    ngx_http_dav_ext_lock_t        *lck;
+    u_char                         *p;
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
+                   "dav_ext: adding lock for '%V'", &lock->path);
+
+    ngx_shmtx_lock(&cache->shpool->mutex);
+
+    lck = ngx_http_dav_ext_get_lock(cache, &lock->path);
+
+    if (lck == NULL) {
+
+        lck = ngx_slab_alloc_locked(cache->shpool,
+                                    sizeof(ngx_http_dav_ext_lock_t)
+                                    + lock->path.len + lock->user.len 
+                                    + lock->token.len);
+        if (lock == NULL) {
+            ngx_shmtx_unlock(&cache->shpool->mutex);
+            return NGX_ERROR;
+        }
+
+        *lck = *lock;
+        lck->node.key = ngx_hash_key(lock->path.data, lock->path.len);
+
+        p = (u_char *) lck + sizeof(ngx_http_dav_ext_lock_t);
+
+        lck->path.data = p;
+        p = ngx_cpymem(p, lock->path.data, lock->path.len);
+        
+        lck->user.data = p;
+        p = ngx_cpymem(p, lock->user.data, lock->user.len);
+
+        lck->token.data = p;
+        ngx_memcpy(p, lock->token.data, lock->token.len);
+
+        ngx_rbtree_insert(&cache->sh->rbtree, &lock->node);
+    }
+
+    ngx_shmtx_unlock(&cache->shpool->mutex);
+
+    return NGX_OK;
+}
+
+
+static ngx_http_dav_ext_lock_t *
+ngx_http_dav_ext_get_lock(ngx_http_dav_ext_cache_t *cache, ngx_str_t *path)
+{
+    ngx_int_t                   rc;
+    ngx_rbtree_key_t            node_key;
+    ngx_rbtree_node_t          *node, *sentinel;
+    ngx_http_dav_ext_lock_t    *lck;
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0,
+                   "dav_ext: looking up lock for path '%V'", path);
+
+    node_key = ngx_hash_key(path->data, path->len);
+
+    node = cache->sh->rbtree.root;
+    sentinel = cache->sh->rbtree.sentinel;
+
+    while (node != sentinel) {
+
+        if (node_key < node->key) {
+            node = node->left;
+            continue;
+        }
+
+        if (node_key > node->key) {
+            node = node->right;
+            continue;
+        }
+
+        /* node_key == node->key */
+
+        lck = (ngx_http_dav_ext_lock_t *) node;
+
+        if (lck->path.len != path->len) {
+            node = (lck->path.len < path->len) ? node->left : node->right;
+            continue;
+        }
+
+        rc = ngx_memcmp(lck->path.data, path->data, path->len);
+
+        if (rc == 0) {
+            return lck;
+        }
+
+        node = (rc < 0) ? node->left : node->right;
+    }
+
+    /* not found */
+
+    return NULL;
+}
+
+
+static void
+ngx_http_dav_ext_rbtree_insert_lock(ngx_rbtree_node_t *temp,
+    ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel)
+{
+    ngx_rbtree_node_t         **p;
+    ngx_http_dav_ext_lock_t    *cn, *cnt;
+
+    for ( ;; ) {
+
+        if (node->key < temp->key) {
+
+            p = &temp->left;
+
+        } else if (node->key > temp->key) {
+
+            p = &temp->right;
+
+        } else { /* node->key == temp->key */
+
+            cn = (ngx_http_dav_ext_lock_t *) node;
+            cnt = (ngx_http_dav_ext_lock_t *) temp;
+
+            p = (cn->path.len < cnt->path.len ||
+                (cn->path.len == cnt->path.len && 
+                    ngx_memcmp(cn->path.data, cnt->path.data, cn->path.len)
+                < 0))
+                   ? &temp->left : &temp->right;
+        }
+
+        if (*p == sentinel) {
+            break;
+        }
+
+        temp = *p;
+    }
+
+    *p = node;
+    node->parent = temp;
+    node->left = sentinel;
+    node->right = sentinel;
+    ngx_rbt_red(node);
+}
+
+
+static ngx_int_t
+ngx_http_dav_ext_locks_init(ngx_shm_zone_t *shm_zone, void *data)
+{
+    ngx_http_dav_ext_cache_t   *ocache = data;
+
+    size_t                      len;
+    ngx_http_dav_ext_cache_t   *cache;
+
+    cache = shm_zone->data;
+
+    if (ocache) {
+        cache->sh = ocache->sh;
+        cache->shpool = ocache->shpool;
+        return NGX_OK;
+    }
+
+    cache->shpool = (ngx_slab_pool_t *) shm_zone->shm.addr;
+
+    if (shm_zone->shm.exists) {
+        cache->sh = cache->shpool->data;
+        return NGX_OK;
+    }
+
+    cache->sh = ngx_slab_alloc(cache->shpool, 
+                               sizeof(ngx_http_dav_ext_cache_sh_t));
+    if (cache->sh == NULL) {
+        return NGX_ERROR;
+    }
+
+    cache->shpool->data = cache->sh;
+
+    ngx_rbtree_init(&cache->sh->rbtree, &cache->sh->sentinel,
+                    ngx_http_dav_ext_rbtree_insert_lock);
+
+    len = sizeof(" in dav lock zone \"\"") + shm_zone->shm.name.len;
+
+    cache->shpool->log_ctx = ngx_slab_alloc(cache->shpool, len);
+    if (cache->shpool->log_ctx == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_sprintf(cache->shpool->log_ctx, " in dav lock zone \"%V\"%Z",
+                &shm_zone->shm.name);
+
+    return NGX_OK;
+}
 
 
 static int 
@@ -391,35 +611,11 @@ ngx_http_dav_ext_flush(ngx_http_request_t *r, ngx_chain_t **ll)
 	ngx_http_dav_ext_output(r, ll, 0, (u_char*)(s), sizeof(s) - 1)
 
 
-static ngx_http_dav_ext_lock_t **
-ngx_http_dav_ext_get_lock(ngx_http_dav_ext_loc_conf_t *dlcf, 
-        ngx_str_t *uri)
-{
-    ngx_http_dav_ext_lock_t       **lck;
-    ngx_uint_t                      hash;
-    ngx_pool_t                     *pool;
-
-    hash = ngx_hash_key(uri->data, uri->len);
-    lck  = &dlcf->lock_buckets[hash % dlcf->lock_nbuckets];
-
-    for (; *lck; lck = &(*lck)->next) {
-        if (uri->len == (*lck)->uri.len
-                && ngx_memcmp(uri->data, &(*lck)->uri, uri->len) == 0)
-        {
-            break;
-        }
-    }
-
-    return lck;
-}
-
-
 static void
 ngx_http_dav_ext_send_lockdiscovery(ngx_http_request_t *r, 
         ngx_http_dav_ext_lock_t *lck, ngx_chain_t **ll)
 {
-    ngx_http_dav_ext_lock_t        *lck;
-    u_char                          buf[ngx_off_t_len + 1];
+    u_char                          buf[NGX_OFF_T_LEN + 1];
 
     NGX_HTTP_DAV_EXT_OUTL(
                 "<D:lockdiscovery>"
@@ -445,8 +641,8 @@ ngx_http_dav_ext_send_lockdiscovery(ngx_http_request_t *r,
                             "<D:href>"
             );
 
-    if (lck->owner.len) {
-        NGX_HTTP_DAV_EXT_OUTES(&lck->owner);
+    if (lck->user.len) {
+        NGX_HTTP_DAV_EXT_OUTES(&lck->user);
     }
 
     NGX_HTTP_DAV_EXT_OUTL(
@@ -455,12 +651,12 @@ ngx_http_dav_ext_send_lockdiscovery(ngx_http_request_t *r,
                         "<D:timeout>"
             );
 
-    if (lck->timeout == -1) {
+    if (lck->expire == 0) {
         NGX_HTTP_DAV_EXT_OUTL("Infinite");
     } else {
         NGX_HTTP_DAV_EXT_OUTL("Second-");
         NGX_HTTP_DAV_EXT_OUTCB(buf, ngx_snprintf(buf, sizeof(buf), "%i", 
-                    lck->timeout) - buf);
+                    lck->expire - ngx_cached_time->sec) - buf);
     }
 
     NGX_HTTP_DAV_EXT_OUTL(
@@ -489,7 +685,7 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
     u_char                              buf[256];
     ngx_str_t                           name;
     ngx_http_dav_ext_loc_conf_t        *dlcf;
-    ngx_http_dav_ext_lock_t           **llck;
+    ngx_http_dav_ext_lock_t            *lck;
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
 
@@ -572,9 +768,9 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
     if (props & NGX_HTTP_DAV_EXT_PROP_lockdiscovery
             && dlcf->methods & NGX_HTTP_LOCK)
     {
-        llck = ngx_http_dav_ext_get_lock(dlcf, uri);
-        if (*llck) {
-            ngx_http_dav_ext_send_lockdiscovery(r, *llck, ll);
+        lck = ngx_http_dav_ext_get_lock(dlcf->cache, uri);
+        if (lck) {
+            ngx_http_dav_ext_send_lockdiscovery(r, lck, ll);
         }
     }
 
@@ -726,7 +922,6 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
     DIR                            *dir;
     struct dirent                  *de;
     size_t                          len;
-    ngx_str_t                      *s;
     u_char                         *p;
     ngx_http_dav_ext_ctx_t         *ctx;
 
@@ -828,9 +1023,10 @@ ngx_http_dav_ext_send_error(ngx_http_request_t *r)
 
 
 static ngx_int_t
-ngx_http_dav_ext_parse_header(ngx_http_requesr_t *r)
+ngx_http_dav_ext_parse_header(ngx_http_request_t *r)
 {
     ngx_http_dav_ext_ctx_t             *ctx;
+    ngx_str_t                          *s;
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_dav_ext_module);
     if (ctx == NULL) {
@@ -839,12 +1035,12 @@ ngx_http_dav_ext_parse_header(ngx_http_requesr_t *r)
     }
 
     ctx->depth = -1; /* infinity */
-    if (r->headers_in->depth) {
-        s = &r->headers_in->depth->value;
+    if (r->headers_in.depth) {
+        s = &r->headers_in.depth->value;
         if (s->len != sizeof("infinity") - 1
-                || ngx_strncasecmp(s->data, (u_char *)"infinity", s->len))
+            || ngx_strncasecmp(s->data, (u_char *)"infinity", s->len))
         {
-            ctx->depth = ngx_atoi(s->data);
+            ctx->depth = ngx_atoi(s->data, s->len);
         }
     }
 
@@ -909,34 +1105,36 @@ static void
 ngx_http_dav_ext_fill_token(ngx_http_dav_ext_lock_t *lck)
 {
     /*TODO*/
+    /*
     h->value.len = sizeof("opaquelocktocken:") - 1 + r->uri.len;
     h->value.data = ngx_palloc(r->pool, r->value.len);
     p = ngx_cpymem(h->value.data, "opaquelocktocken:", 
             sizeof("opaquelocktocken:") - 1);
     ngx_memcpy(p, r->uri.data, r->uri.len);
+    */
+    lck->token = lck->path;
 }
 
-
+/*
 static void
 ngx_htp_dav_ext_lock_expired(ngx_event_t *e)
 {
     ngx_http_dav_ext_lock_t       **llck, *lck;
 
     lck = e->data;
-    /*TODO*/
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, e->log, 0,
-            "dav_ext: timer expired: %i sec", lck->timeout);
+            "dav_ext: timer expired: %i sec");
 
-    llck = ngx_http_dav_ext_get_lock(dlcf, &lck->uri);
+    llck = ngx_http_dav_ext_get_lock(dlcf->cache, &lck->uri);
 }
-
+*/
 
 static void
 ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
 {
     ngx_table_elt_t                *h;
-    ngx_http_dav_ext_lock_t       **llck, *lck;
+    ngx_http_dav_ext_lock_t        *lck;
     ngx_http_dav_ext_ctx_t         *ctx;
     ngx_http_dav_ext_loc_conf_t    *dlcf;
 
@@ -955,72 +1153,63 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     if (r->headers_in.user.len == 0) {
         ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
                 "dav_ext: unauthorized lock");
-        return NGX_ERROR;
+        ngx_http_dav_ext_send_error(r);
+        return;
     }
 
-    llck = ngx_http_dav_ext_get_lock(dlcf, r->uri);
-    if (*llck) {
-        lck = *llck;
+    lck = ngx_http_dav_ext_get_lock(dlcf->cache, &r->uri);
+    if (lck) {
         if (r->headers_in.user.len != lck->user.len
-                || ngx_memcmp(r->headers_in.user.data,
-                    lck->user.data, lck->user.len))
+            || ngx_memcmp(r->headers_in.user.data,
+                          lck->user.data, lck->user.len))
         {
             ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
                 "dav_ext: already locked by another user");
-            return NGX_ERROR;
+            ngx_http_dav_ext_send_error(r);
+            return;
         }
 
         goto refresh;
     }
 
-    pool = ngx_create_pool(1024, dlcf->log);
-    if (pool == NULL) {
+    lck = ngx_pcalloc(r->pool, sizeof(ngx_http_dav_ext_lock_t));
+    if (lck == NULL) {
+        ngx_http_dav_ext_send_error(r);
         return;
     }
-
-    *llck = ngx_pcalloc(pool, sizeof(ngx_http_dav_ext_lock_t));
-    if (*llck == NULL) {
-        ngx_destroy_pool(pool);
-        return;
-    }
-
-    lck = *llck;
-    lck->pool = pool;
-
-#define NGX_HTTP_DAV_EXT_COPY_LOCK_FIELD(from, to)                      \
-    from.len = to.len;                                                  \
-    to.data = ngx_palloc(lck->pool, to.len);                            \
-    if (to.data == NULL) {                                              \
-        return;                                                         \
-    }                                                                   \
-    ngx_memcpy(from.data, to.data);
-
-    NGX_HTTP_DAV_EXT_COPY_LOCK_FIELD(r->uri, lck->uri);
-    NGX_HTTP_DAV_EXT_COPY_LOCK_FIELD(r->headers_in.user, lck->user);
-    NGX_HTTP_DAV_EXT_COPY_LOCK_FIELD(ctx->lock_owner, lck->owner);
-
-#undef NGX_HTTP_DAV_EXT_COPY_LOCK_FIELD
 
     lck->depth = ctx->depth;
+    lck->path = r->uri;
+    lck->user = ctx->lock_owner;
+/*    lck->owner = r->headers_in.user;*/
 
     ngx_http_dav_ext_fill_token(lck);
     h = ngx_list_push(&r->headers_out.headers);
     if (h == NULL) {
-        return NGX_ERROR;
+        ngx_http_dav_ext_send_error(r);
+        return;
     }
     ngx_str_set(&h->key, "Lock-Token");
     h->value.len = lck->token.len;
-    h->value.data = ngx_palloc(r->pool, r->value.len);
+    h->value.data = ngx_palloc(r->pool, lck->token.len);
     ngx_memcpy(h->value.data, lck->token.data, lck->token.len);
     h->hash = 1;
-
+/*
     lck->expire.data = lck;
     lck->expire.handler = ngx_htp_dav_ext_lock_expired;
     lck->expire.log = dlcf->log;
+*/
+
+    if (ngx_http_dav_ext_add_lock(dlcf->cache, lck) != NGX_OK) {
+        ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
+                      "dav_ext: failed to add lock");
+        ngx_http_dav_ext_send_error(r);
+        return;
+    }
 
 refresh:
-    (*llck)->timeout = NGX_HTTP_DAV_EXT_TIMEOUT;
-    ngx_add_timer(&(*llck)->expire, (*llck)->timeout * 1000);
+    lck->expire = ngx_cached_time->sec + NGX_HTTP_DAV_EXT_TIMEOUT;
+    /*ngx_add_timer(&(*llck)->expire, (*llck)->timeout * 1000);*/
 
     r->headers_out.status = NGX_HTTP_OK;
     ngx_http_send_header(r);
@@ -1035,7 +1224,7 @@ ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
         = ngx_string("Lock-Tocken");
 
 	ngx_http_variable_value_t       lock_token;
-    ngx_http_dav_ext_lock_t       **llck, *lck;
+    ngx_http_dav_ext_lock_t        *lck;
     ngx_http_dav_ext_loc_conf_t    *dlcf;
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
@@ -1055,17 +1244,16 @@ ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
         return NGX_ERROR;
     }
 
-    llck = ngx_http_dav_ext_get_lock(dlcf, uri);
-    if (*llck == NULL) {
+    lck = ngx_http_dav_ext_get_lock(dlcf->cache, &r->uri);
+    if (lck == NULL) {
         ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
-                "dav_ext: resource not locked");
+                      "dav_ext: resource not locked");
         return NGX_ERROR;
     }
-    lck = *llck;
 
     if (lck->user.len != r->headers_in.user.len
-            || ngx_memcmp(lck->user.data, r->headers_in.user.data,
-                lck->user.len))
+       || ngx_memcmp(lck->user.data, r->headers_in.user.data,
+                     lck->user.len))
     {
         ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
                 "dav_ext: unlock user mismatch: '%V' '%V'",
@@ -1083,13 +1271,12 @@ ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
         return NGX_ERROR;
     }
 
+    /*
     if (lck->expire.timer_set) {
         ngx_del_timer(&lck->expire);
-    }
+    }*/
 
-    *llck = (*llck)->next;
-    lck->next = dlcf->lock_free;
-    dlcf->lock_free = lck;
+    ngx_http_dav_ext_delete_lock(dlcf->cache, lck);
 
     r->headers_out.status = NGX_HTTP_NO_CONTENT;
     r->header_only = 1;
@@ -1193,7 +1380,6 @@ ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf)
         return NULL;
     }
 
-    conf->lock_nbuckets = NGX_CONF_UNSET;
     conf->log = &cf->cycle->new_log;
 
     return conf;
@@ -1203,15 +1389,36 @@ ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf)
 static char *
 ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 {
-    ngx_http_dav_ext_loc_conf_t  *prev = parent;
-    ngx_http_dav_ext_loc_conf_t  *conf = child;
+    ngx_http_dav_ext_loc_conf_t    *prev = parent;
+    ngx_http_dav_ext_loc_conf_t    *conf = child;
+    ngx_str_t                       name = ngx_string(
+                                           NGX_HTTP_DAV_EXT_LOCK_ZONE);
 
     ngx_conf_merge_bitmask_value(conf->methods, prev->methods,
             (NGX_CONF_BITMASK_SET|NGX_HTTP_DAV_EXT_OFF));
-    ngx_conf_merge_size_value(conf->lock_nbuckets, prev->lock_nbuckets, 1024);
 
-    conf->lock_buckets = ngx_pcalloc(cf->pool, 
-            sizeof(ngx_http_dav_ext_lock_t *) * conf->lock_nbuckets);
+    if (conf->methods & (NGX_HTTP_LOCK|NGX_HTTP_UNLOCK)) {
+
+        conf->cache = ngx_pcalloc(cf->pool, sizeof(ngx_http_dav_ext_cache_t));
+        if (conf->cache == NULL) {
+            return NGX_CONF_ERROR;
+        }
+
+        conf->cache->shm_zone = ngx_shared_memory_add(cf, &name, 
+                NGX_HTTP_DAV_EXT_LOCK_SIZE, &ngx_http_dav_ext_module);
+        if (conf->cache->shm_zone == NULL) {
+            return NGX_CONF_ERROR;
+        }
+
+        if (conf->cache->shm_zone->data) {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                    "duplicate zone \"%V\"", name);
+            return NGX_CONF_ERROR;
+        }
+
+        conf->cache->shm_zone->init = ngx_http_dav_ext_locks_init;
+        conf->cache->shm_zone->data = conf->cache;
+    }
 
     return NGX_CONF_OK;
 }
