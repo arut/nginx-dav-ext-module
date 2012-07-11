@@ -509,9 +509,9 @@ ngx_http_dav_ext_xml_data(void *user_data, const XML_Char *s, int len)
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_dav_ext_module);
 
-	if (ctx->nodes & NGX_HTTP_DAV_EXT_NODE_lockinfo
-        && ctx->nodes & NGX_HTTP_DAV_EXT_NODE_owner
-        && ctx->nodes & NGX_HTTP_DAV_EXT_NODE_href)
+	if (ctx->nodes & NGX_HTTP_DAV_EXT_NODE_lockinfo &&
+        ctx->nodes & NGX_HTTP_DAV_EXT_NODE_owner &&
+        ctx->nodes & NGX_HTTP_DAV_EXT_NODE_href)
     {
         ctx->lock_owner.data = ngx_palloc(r->pool, len);
         if (ctx->lock_owner.data == NULL) {
@@ -766,8 +766,8 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
         );
     }
 
-    if (props & NGX_HTTP_DAV_EXT_PROP_lockdiscovery
-        && dlcf->methods & NGX_HTTP_LOCK)
+    if (props & NGX_HTTP_DAV_EXT_PROP_lockdiscovery &&
+        dlcf->methods & NGX_HTTP_LOCK)
     {
         ngx_shmtx_lock(&dlcf->cache->shpool->mutex);
         lck = ngx_http_dav_ext_get_lock(dlcf->cache, uri);
@@ -1041,8 +1041,8 @@ ngx_http_dav_ext_parse_header(ngx_http_request_t *r)
     ctx->depth = -1; /* infinity */
     if (r->headers_in.depth) {
         s = &r->headers_in.depth->value;
-        if (s->len != sizeof("infinity") - 1
-            || ngx_strncasecmp(s->data, (u_char *)"infinity", s->len))
+        if (s->len != sizeof("infinity") - 1 ||
+            ngx_strncasecmp(s->data, (u_char *)"infinity", s->len))
         {
             ctx->depth = ngx_atoi(s->data, s->len);
         }
@@ -1092,8 +1092,8 @@ ngx_http_dav_ext_parse_body(ngx_http_request_t *r)
 static void
 ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 {
-    if (ngx_http_dav_ext_parse_header(r) != NGX_OK
-        || ngx_http_dav_ext_parse_body(r) != NGX_OK) 
+    if (ngx_http_dav_ext_parse_header(r) != NGX_OK ||
+        ngx_http_dav_ext_parse_body(r) != NGX_OK) 
     {
         ngx_http_dav_ext_send_error(r);
         return;
@@ -1107,10 +1107,40 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 
 
 static void
-ngx_http_dav_ext_fill_token(ngx_http_dav_ext_lock_t *lck)
+ngx_http_dav_ext_fill_token(ngx_http_request_t *r, 
+    ngx_http_dav_ext_lock_t *lck)
 {
-    /* TODO opaquetoken */
-    lck->token = lck->path;
+    u_char             *p;
+    uint32_t            t1;
+    uint16_t            t2, t3;
+    uint64_t            node;
+
+    static uint16_t     seq;
+
+    lck->token.len = 20 + sizeof("opaquelocktoken:") - 1;
+    lck->token.data = ngx_palloc(r->connection->pool, lck->token.len);
+    if (lck->token.data == NULL) {
+        return;
+    }
+
+    p = ngx_cpymem(lck->token.data, "opaquelocktoken:", 
+                   sizeof("opaquelocktoken:") - 1);
+
+    t1 = ngx_cached_time->sec;
+    t2 = ngx_cached_time->msec & 0xffff;
+    t3 = ngx_cached_time->msec >> 16;
+    node = ngx_getpid(); /* TODO: ip? */
+    ++seq;
+
+    p = ngx_hex_dump(p, (u_char *) &t1, 4);
+    *p++ = '-';
+    p = ngx_hex_dump(p, (u_char *) &t2, 2);
+    *p++ = '-';
+    p = ngx_hex_dump(p, (u_char *) &t3, 2);
+    *p++ = '-';
+    p = ngx_hex_dump(p, (u_char *) &seq, 2);
+    *p++ = '-';
+    p = ngx_hex_dump(p, (u_char *) &node, 6);
 }
 
 
@@ -1124,8 +1154,8 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
 
-    if (ngx_http_dav_ext_parse_header(r) != NGX_OK
-        || ngx_http_dav_ext_parse_body(r) != NGX_OK) 
+    if (ngx_http_dav_ext_parse_header(r) != NGX_OK ||
+        ngx_http_dav_ext_parse_body(r) != NGX_OK) 
     {
         ngx_http_dav_ext_send_error(r);
         return;
@@ -1157,9 +1187,9 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
             lck = NULL;
 
         } else  {
-            if (r->headers_in.user.len != lck->user.len
-                || ngx_memcmp(r->headers_in.user.data,
-                              lck->user.data, lck->user.len))
+            if (r->headers_in.user.len != lck->user.len ||
+                ngx_memcmp(r->headers_in.user.data,
+                           lck->user.data, lck->user.len))
             {
                 ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
                               "dav_ext: already locked by user '%V'",
@@ -1181,7 +1211,7 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     lck->owner = ctx->lock_owner;
     lck->user = r->headers_in.user;
 
-    ngx_http_dav_ext_fill_token(lck);
+    ngx_http_dav_ext_fill_token(r, lck);
     h = ngx_list_push(&r->headers_out.headers);
     if (h == NULL) {
         goto error_unlock;
@@ -1254,8 +1284,8 @@ ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
         goto error_unlock;
     }
 
-    if (lck->user.len != r->headers_in.user.len
-        || ngx_memcmp(lck->user.data, r->headers_in.user.data,
+    if (lck->user.len != r->headers_in.user.len ||
+        ngx_memcmp(lck->user.data, r->headers_in.user.data,
                       lck->user.len))
     {
         ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
@@ -1264,9 +1294,9 @@ ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
         goto error_unlock;
     }
 
-    if (lck->token.len != lock_token.len
-        || ngx_memcmp(lck->token.data, lock_token.data,
-                      lck->token.len))
+    if (lck->token.len != lock_token.len ||
+        ngx_memcmp(lck->token.data, lock_token.data,
+                   lck->token.len))
     {
         ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
                      "dav_ext: unlock token mismatch: '%V' '%*s'",
@@ -1666,9 +1696,10 @@ ngx_http_dav_ext_access(ngx_http_request_t *r)
     t = tokens.elts;
     for (i = 0; i < tokens.nelts; ++i, ++t) {
         if (t->count == 0) {
+
             /* found unreferenced token;
              * that can happen after server restart;
-             * client still thinks token exists;
+             * client still thinks token exists
              */
 
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -1678,7 +1709,9 @@ ngx_http_dav_ext_access(ngx_http_request_t *r)
             r->headers_out.status = NGX_HTTP_PRECONDITION_FAILED;
             r->header_only = 1;
             r->headers_out.content_length_n = 0;
+            
             ngx_http_finalize_request(r, ngx_http_send_header(r));
+
             return NGX_DONE;
         }
     }
@@ -1692,26 +1725,33 @@ locked:
 
     b = ngx_create_temp_buf(r->pool, sizeof(locked1) - 1 + sizeof(locked2) - 1
                             + submitted.len);
+    b->last_buf = 1;
+
     p = ngx_cpymem(b->pos, locked1, sizeof(locked1) - 1);
     p = ngx_cpymem(p, submitted.data, submitted.len);
+
     ngx_memcpy(p, locked2, sizeof(locked2) - 1);
-    b->last_buf = 1;
 
     ngx_memzero(&cl, sizeof(cl));
     cl.buf = b;
 
     r->headers_out.content_length_n = b->last - b->pos;
+
     ngx_http_send_header(r);
     ngx_http_output_filter(r, &cl);
     ngx_http_finalize_request(r, NGX_OK);
+
     return NGX_DONE;
 
 error:
     ngx_shmtx_unlock(&dlcf->cache->shpool->mutex);
+
     r->headers_out.status = NGX_HTTP_BAD_REQUEST;
     r->header_only = 1;
     r->headers_out.content_length_n = 0;
+
     ngx_http_finalize_request(r, ngx_http_send_header(r));
+
     return NGX_ERROR;
 }
 
