@@ -1,4 +1,4 @@
-# NGINX WebDAV missing commands support (PROPFIND & OPTIONS)
+# NGINX WebDAV support of PROPFIND OPTIONS LOCK/UNLOCK
 ## nginx-dav-ext-module
 
 (c) 2012 Arutyunyan Roman (arut@qip.ru, arutyunyan.roman@gmail.com)
