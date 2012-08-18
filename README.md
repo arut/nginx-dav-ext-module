@@ -1,9 +1,9 @@
-== nginx-dav-ext-module ==
+# NGINX WebDAV missing commands support (PROPFIND & OPTIONS)
+## nginx-dav-ext-module
 
-NGINX WebDAV missing commands support (PROPFIND & OPTIONS)
+(c) 2012 Arutyunyan Roman (arut@qip.ru, arutyunyan.roman@gmail.com)
 
-(c) 2012 Arutyunyan Roman (arut@qip.ru)
-
+### WARNING: This version provides experimental lock support, it's not properly tested
 
 For full WebDAV support in NGINX you need to turn on standard NGINX 
 WebDAV module (providing partial WebDAV implementation) as well as 
@@ -22,7 +22,7 @@ Example config:
 
 	location / {
 
-		dav_methods PUT DELETE MKCOL COPY MOVE;
+		dav_methods PUT DELETE MKCOL COPY MOVE LOCK UNLOCK;
 		dav_ext_methods PROPFIND OPTIONS;
 
 		root /var/root/;
