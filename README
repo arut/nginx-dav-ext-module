@@ -4,6 +4,9 @@ NGINX WebDAV missing commands support (PROPFIND & OPTIONS)
 
 (c) 2012 Arutyunyan Roman (arut@qip.ru)
 
+Contributors:
+Mikhail Emelchenkov @ MyLove Company, LLC (mikhail@mylovecompany.com)
+
 
 For full WebDAV support in NGINX you need to turn on standard NGINX 
 WebDAV module (providing partial WebDAV implementation) as well as 
@@ -27,3 +30,16 @@ Example config:
 
 		root /var/root/;
 	}
+
+
+Important note:
+
+People often use WebDAV with digest authentication, and there is a
+Nginx third party module nginx-http-auth-digest.
+
+Don't use original version from
+https://github.com/samizdatco/nginx-http-auth-digest/, it has a bug
+which prevents uploading files with whitespaces in their names.
+
+Use well-maintained fork from
+https://github.com/chazmcgarvey/nginx-http-auth-digest instead.

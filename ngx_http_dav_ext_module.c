@@ -1,6 +1,9 @@
 /******************************************************************************
   Copyright (c) 2012, Roman Arutyunyan (arut@qip.ru)
   All rights reserved.
+  
+  Contributors:
+  Mikhail Emelchenkov @ MyLove Company, LLC (mikhail@mylovecompany.com)
 
   Redistribution and use in source and binary forms, with or without modification, 
   are permitted provided that the following conditions are met:
@@ -209,49 +212,99 @@ static void ngx_http_dav_ext_end_xml_elt(void *user_data, const XML_Char *name)
 #define NGX_HTTP_DAV_EXT_COPY    0x01
 #define NGX_HTTP_DAV_EXT_ESCAPE  0x02
 
+uintptr_t
+ngx_http_dav_ext_escape_html(u_char *dst, u_char *src, size_t size)
+{
+    u_char      ch;
+    ngx_uint_t  len;
+
+    if (dst == NULL) {
+
+        len = 0;
+
+        while (size) {
+            switch (*src++) {
+
+            case ' ':
+                len += sizeof("%20") - 2;
+                break;
+
+            default:
+                break;
+            }
+            size--;
+        }
+
+        return (uintptr_t) len;
+    }
+
+    while (size) {
+        ch = *src++;
+
+        switch (ch) {
+
+        case ' ':
+            *dst++ = '%'; *dst++ = '2'; *dst++ = '0'; 
+            break;
+
+        default:
+            *dst++ = ch;
+            break;
+        }
+        size--;
+    }
+
+    return (uintptr_t) dst;
+}
+
 static void
 ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
-	ngx_int_t flags, u_char *data, ngx_uint_t len) 
+    ngx_int_t flags, u_char *data, ngx_uint_t len) 
 {
-	ngx_chain_t *cl;
-	ngx_buf_t   *b;
+    ngx_chain_t *cl;
+    ngx_uint_t  len_int;
+    ngx_buf_t   *b, *b_int /* internal buffer */;
 
-	if (!len) {
-		return; 
-	}
+    if (!len) {
+        return; 
+    }
 
-	if (flags & NGX_HTTP_DAV_EXT_ESCAPE) {
+    if (flags & NGX_HTTP_DAV_EXT_ESCAPE) {
+        len_int = len + ngx_escape_html(NULL, data, len);
+        b_int = ngx_create_temp_buf(r->pool, len_int);
+        b_int->last = (u_char*)ngx_escape_html(b_int->pos, data, len);
+        
+        len = len_int + ngx_http_dav_ext_escape_html(NULL, b_int->pos, len_int);
+        b = ngx_create_temp_buf(r->pool, len);
+        b->last = (u_char*)ngx_http_dav_ext_escape_html(b->pos, b_int->pos, len_int);
+        
+        ngx_pfree(r->pool, b_int);
+        
+    } else if (flags & NGX_HTTP_DAV_EXT_COPY) {
+        b = ngx_create_temp_buf(r->pool, len);
+        b->last = ngx_cpymem(b->pos, data, len);
 
-		b = ngx_create_temp_buf(r->pool, len + ngx_escape_html(NULL, data, len));
-		b->last = (u_char*)ngx_escape_html(b->pos, data, len);
+    } else {
+        b = ngx_calloc_buf(r->pool);
+        b->memory = 1;
+        b->pos = data;
+        b->start = data;
+        b->last = b->pos + len;
+        b->end = b->last;
+    }
 
-	} else if (flags & NGX_HTTP_DAV_EXT_COPY) {
+    cl = ngx_alloc_chain_link(r->pool);
+    cl->buf = b;
+    cl->next = NULL;
 
-		b = ngx_create_temp_buf(r->pool, len);
-		b->last = ngx_cpymem(b->pos, data, len);
-
-	} else {
-
-		b = ngx_calloc_buf(r->pool);
-		b->memory = 1;
-		b->pos = data;
-		b->start = data;
-		b->last = b->pos + len;
-		b->end = b->last;
-	}
-
-	cl = ngx_alloc_chain_link(r->pool);
-	cl->buf = b;
-	cl->next = NULL;
-
-	if (*ll != NULL) {
-		cl->next = (*ll)->next;
-		(*ll)->next = cl;
-		*ll = cl;
-	} else {
-		*ll = cl;
-		cl->next = cl;
-	}
+    if (*ll != NULL) {
+        cl->next = (*ll)->next;
+        (*ll)->next = cl;
+        *ll = cl;
+    } else {
+        *ll = cl;
+        cl->next = cl;
+    }
 }
 
 static void
