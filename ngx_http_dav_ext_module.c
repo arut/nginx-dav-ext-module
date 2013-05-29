@@ -206,8 +206,9 @@ static void ngx_http_dav_ext_end_xml_elt(void *user_data, const XML_Char *name)
 	ngx_http_dav_ext_start_xml_elt(user_data, name, NULL);
 }
 
-#define NGX_HTTP_DAV_EXT_COPY    0x01
-#define NGX_HTTP_DAV_EXT_ESCAPE  0x02
+#define NGX_HTTP_DAV_EXT_COPY       0x01
+#define NGX_HTTP_DAV_EXT_ESCAPE     0x02
+#define NGX_HTTP_DAV_EXT_URLESCAPE  0x04
 
 static void
 ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
@@ -224,6 +225,11 @@ ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
 
 		b = ngx_create_temp_buf(r->pool, len + ngx_escape_html(NULL, data, len));
 		b->last = (u_char*)ngx_escape_html(b->pos, data, len);
+
+	} else if (flags & NGX_HTTP_DAV_EXT_URLESCAPE) {
+        
+		b = ngx_create_temp_buf(r->pool, len + ngx_escape_uri(NULL, data, len, NGX_ESCAPE_ARGS));
+		b->last = (u_char*)ngx_escape_uri(b->pos, data, len, NGX_ESCAPE_ARGS);
 
 	} else if (flags & NGX_HTTP_DAV_EXT_COPY) {
 
@@ -285,6 +291,10 @@ ngx_http_dav_ext_flush(ngx_http_request_t *r, ngx_chain_t **ll)
 /* output escaped string */
 #define NGX_HTTP_DAV_EXT_OUTES(s) \
 	ngx_http_dav_ext_output(r, ll, NGX_HTTP_DAV_EXT_ESCAPE, (s)->data, (s)->len)
+
+/* output escaped string */
+#define NGX_HTTP_DAV_EXT_OUTUES(s) \
+	ngx_http_dav_ext_output(r, ll, NGX_HTTP_DAV_EXT_URLESCAPE, (s)->data, (s)->len)
 
 /* output literal */
 #define NGX_HTTP_DAV_EXT_OUTL(s) \
@@ -436,7 +446,7 @@ ngx_http_dav_ext_send_propfind_item(ngx_http_request_t *r,
 				"<D:href>"
 		);
 
-	NGX_HTTP_DAV_EXT_OUTES(uri);
+	NGX_HTTP_DAV_EXT_OUTUES(uri);
 
 	NGX_HTTP_DAV_EXT_OUTL(
 				"</D:href>\n"
