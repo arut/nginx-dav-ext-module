@@ -217,14 +217,14 @@ ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
 	ngx_chain_t *cl;
 	ngx_buf_t   *b;
 	u_char      *new_data;
-	size_t       new_len;
+	ngx_uint_t   new_len;
 
 	if (!len) {
 		return; 
 	}
 
 	if (flags & NGX_HTTP_DAV_EXT_URLESCAPE) {
-		new_data = ngx_palloc(r->pool, len + ngx_escape_uri(NULL, data, len, NGX_ESCAPE_URI));
+		new_data = ngx_palloc(r->pool, len + 2 * ngx_escape_uri(NULL, data, len, NGX_ESCAPE_URI));
 		new_len = (u_char*)ngx_escape_uri(new_data, data, len, NGX_ESCAPE_URI) - new_data;
 		data = new_data;
 		len = new_len;
