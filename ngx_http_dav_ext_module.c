@@ -216,20 +216,24 @@ ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
 {
 	ngx_chain_t *cl;
 	ngx_buf_t   *b;
+	u_char      *new_data;
+	size_t       new_len;
 
 	if (!len) {
 		return; 
+	}
+
+	if (flags & NGX_HTTP_DAV_EXT_URLESCAPE) {
+		new_data = ngx_palloc(r->pool, len + ngx_escape_uri(NULL, data, len, NGX_ESCAPE_URI));
+		new_len = (u_char*)ngx_escape_uri(new_data, data, len, NGX_ESCAPE_URI) - new_data;
+		data = new_data;
+		len = new_len;
 	}
 
 	if (flags & NGX_HTTP_DAV_EXT_ESCAPE) {
 
 		b = ngx_create_temp_buf(r->pool, len + ngx_escape_html(NULL, data, len));
 		b->last = (u_char*)ngx_escape_html(b->pos, data, len);
-
-	} else if (flags & NGX_HTTP_DAV_EXT_URLESCAPE) {
-        
-		b = ngx_create_temp_buf(r->pool, len + ngx_escape_uri(NULL, data, len, NGX_ESCAPE_ARGS));
-		b->last = (u_char*)ngx_escape_uri(b->pos, data, len, NGX_ESCAPE_ARGS);
 
 	} else if (flags & NGX_HTTP_DAV_EXT_COPY) {
 
@@ -294,7 +298,7 @@ ngx_http_dav_ext_flush(ngx_http_request_t *r, ngx_chain_t **ll)
 
 /* output escaped string */
 #define NGX_HTTP_DAV_EXT_OUTUES(s) \
-	ngx_http_dav_ext_output(r, ll, NGX_HTTP_DAV_EXT_URLESCAPE, (s)->data, (s)->len)
+	ngx_http_dav_ext_output(r, ll, NGX_HTTP_DAV_EXT_ESCAPE|NGX_HTTP_DAV_EXT_URLESCAPE, (s)->data, (s)->len)
 
 /* output literal */
 #define NGX_HTTP_DAV_EXT_OUTL(s) \
