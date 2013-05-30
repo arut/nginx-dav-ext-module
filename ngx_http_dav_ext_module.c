@@ -524,7 +524,7 @@ static ngx_int_t
 ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 {
 	size_t                    root;
-	ngx_str_t                 path, spath, suri;
+	ngx_str_t                 path, spath, ruri, suri;
 	ngx_chain_t               *l = NULL, **ll = &l;
 	DIR                       *dir;
 	int                       depth;
@@ -572,17 +572,19 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 		);
 
 	ngx_http_dav_ext_flush(r, ll);
-
-	suri.data = ngx_palloc(r->pool, r->uri.len + 2 * ngx_escape_uri(NULL,
+/*
+	ruri.data = ngx_palloc(r->pool, r->uri.len + 2 * ngx_escape_uri(NULL,
 						r->uri.data, r->uri.len, NGX_ESCAPE_URI));
-	if (suri.data == NULL) {
+	if (ruri.data == NULL) {
 		return NGX_ERROR;
 	}
 
-	suri.len = (u_char *) ngx_escape_uri(suri.data, r->uri.data, r->uri.len,
-						NGX_ESCAPE_URI) - suri.data;
+	ruri.len = (u_char *) ngx_escape_uri(ruri.data, r->uri.data, r->uri.len,
+						NGX_ESCAPE_URI) - ruri.data;
+*/
+	ruri = r->unparsed_uri;
 
-	ngx_http_dav_ext_send_propfind_item(r, (char*)path.data, &suri);
+	ngx_http_dav_ext_send_propfind_item(r, (char*)path.data, &ruri);
 
 	if (depth) {
 
@@ -614,7 +616,7 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 				uc_len = (u_char*)ngx_escape_uri(uc, (u_char *) de->d_name, len,
 							NGX_ESCAPE_URI_COMPONENT) - uc;
 
-				ngx_http_dav_ext_make_child(r->pool, &r->uri, uc, uc_len, &suri);
+				ngx_http_dav_ext_make_child(r->pool, &ruri, uc, uc_len, &suri);
 
 				ngx_http_dav_ext_send_propfind_item(r, (char*)spath.data, &suri);
 
