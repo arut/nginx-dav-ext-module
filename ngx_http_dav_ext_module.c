@@ -206,9 +206,8 @@ static void ngx_http_dav_ext_end_xml_elt(void *user_data, const XML_Char *name)
 	ngx_http_dav_ext_start_xml_elt(user_data, name, NULL);
 }
 
-#define NGX_HTTP_DAV_EXT_COPY       0x01
-#define NGX_HTTP_DAV_EXT_ESCAPE     0x02
-#define NGX_HTTP_DAV_EXT_URLESCAPE  0x04
+#define NGX_HTTP_DAV_EXT_COPY    0x01
+#define NGX_HTTP_DAV_EXT_ESCAPE  0x02
 
 static void
 ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
@@ -216,18 +215,9 @@ ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
 {
 	ngx_chain_t *cl;
 	ngx_buf_t   *b;
-	u_char      *new_data;
-	ngx_uint_t   new_len;
 
 	if (!len) {
 		return; 
-	}
-
-	if (flags & NGX_HTTP_DAV_EXT_URLESCAPE) {
-		new_data = ngx_palloc(r->pool, len + 2 * ngx_escape_uri(NULL, data, len, NGX_ESCAPE_URI));
-		new_len = (u_char*)ngx_escape_uri(new_data, data, len, NGX_ESCAPE_URI) - new_data;
-		data = new_data;
-		len = new_len;
 	}
 
 	if (flags & NGX_HTTP_DAV_EXT_ESCAPE) {
@@ -295,10 +285,6 @@ ngx_http_dav_ext_flush(ngx_http_request_t *r, ngx_chain_t **ll)
 /* output escaped string */
 #define NGX_HTTP_DAV_EXT_OUTES(s) \
 	ngx_http_dav_ext_output(r, ll, NGX_HTTP_DAV_EXT_ESCAPE, (s)->data, (s)->len)
-
-/* output escaped string */
-#define NGX_HTTP_DAV_EXT_OUTUES(s) \
-	ngx_http_dav_ext_output(r, ll, NGX_HTTP_DAV_EXT_ESCAPE|NGX_HTTP_DAV_EXT_URLESCAPE, (s)->data, (s)->len)
 
 /* output literal */
 #define NGX_HTTP_DAV_EXT_OUTL(s) \
@@ -450,7 +436,7 @@ ngx_http_dav_ext_send_propfind_item(ngx_http_request_t *r,
 				"<D:href>"
 		);
 
-	NGX_HTTP_DAV_EXT_OUTUES(uri);
+	NGX_HTTP_DAV_EXT_OUTES(uri);
 
 	NGX_HTTP_DAV_EXT_OUTL(
 				"</D:href>\n"
@@ -543,10 +529,10 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 	DIR                       *dir;
 	int                       depth;
 	struct dirent             *de;
-	size_t                    len;
+	size_t                    len, uc_len;
 	ngx_http_variable_value_t vv;
 	ngx_str_t                 depth_name = ngx_string("depth");
-	u_char                    *p;
+	u_char                    *p, *uc;
 
 	if (ngx_http_variable_unknown_header(&vv, &depth_name, 
 					&r->headers_in.headers.part, 0) == NGX_OK
@@ -587,7 +573,16 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 
 	ngx_http_dav_ext_flush(r, ll);
 
-	ngx_http_dav_ext_send_propfind_item(r, (char*)path.data, &r->uri);
+	suri.data = ngx_palloc(r->pool, r->uri.len + 2 * ngx_escape_uri(NULL,
+						r->uri.data, r->uri.len, NGX_ESCAPE_URI));
+	if (suri.data == NULL) {
+		return NGX_ERROR;
+	}
+
+	suri.len = (u_char *) ngx_escape_uri(suri.data, r->uri.data, r->uri.len,
+						NGX_ESCAPE_URI) - suri.data;
+
+	ngx_http_dav_ext_send_propfind_item(r, (char*)path.data, &suri);
 
 	if (depth) {
 
@@ -608,8 +603,18 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 				ngx_http_dav_ext_make_child(r->pool, &path, 
 					(u_char*)de->d_name, len, &spath);
 
-				ngx_http_dav_ext_make_child(r->pool, &r->uri, 
-					(u_char*)de->d_name, len, &suri);
+				/* escape uri component */
+
+				uc = ngx_palloc(r->pool, len + 2 * ngx_escape_uri(NULL,
+							(u_char *) de->d_name, len, NGX_ESCAPE_URI_COMPONENT));
+				if (uc == NULL) {
+					return NGX_ERROR;
+				}
+
+				uc_len = (u_char*)ngx_escape_uri(uc, (u_char *) de->d_name, len,
+							NGX_ESCAPE_URI_COMPONENT) - uc;
+
+				ngx_http_dav_ext_make_child(r->pool, &r->uri, uc, uc_len, &suri);
 
 				ngx_http_dav_ext_send_propfind_item(r, (char*)spath.data, &suri);
 
