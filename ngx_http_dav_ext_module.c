@@ -671,6 +671,9 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 
 		ngx_str_set(&r->headers_out.status_line, "207 Multi-Status");
 
+		/* Add application/xml header required by RFC 4918. */
+                ngx_str_set(&r->headers_out.content_type, "application/xml");
+
 		ngx_http_send_header(r);
 
 		ngx_http_finalize_request(r, ngx_http_dav_ext_send_propfind(r));
