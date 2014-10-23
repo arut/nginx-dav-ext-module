@@ -336,7 +336,16 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 
 			name.len = uri->data + uri->len - name.data;
 
-			NGX_HTTP_DAV_EXT_OUTES(&name);
+            // Unescape the display name
+            u_char        name_buf[1024] = {0};
+            ngx_str_t     unescaped_name;
+            unescaped_name.data = name_buf;
+            u_char* dst = unescaped_name.data;
+            ngx_unescape_uri(&dst, &(name.data), name.len, 0);
+            *dst = '\0';
+            unescaped_name.len = strlen((char*)unescaped_name.data);
+
+			NGX_HTTP_DAV_EXT_OUTES(&unescaped_name);
 		}
 		
 		NGX_HTTP_DAV_EXT_OUTL(
