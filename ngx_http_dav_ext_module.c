@@ -328,16 +328,9 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 						"<D:displayname>"
 			);
 
-		if (uri->len) {
-
-			for(name.data = uri->data + uri->len;
-				name.data >= uri->data + 1 && name.data[-1] != '/'; 
-				--name.data);
-
-			name.len = uri->data + uri->len - name.data;
-
-			NGX_HTTP_DAV_EXT_OUTES(&name);
-		}
+		name.data = strrchr(path, '/') + 1;
+		name.len = strlen(name.data);
+		NGX_HTTP_DAV_EXT_OUTES(&name);
 		
 		NGX_HTTP_DAV_EXT_OUTL(
 						"</D:displayname>\n"
