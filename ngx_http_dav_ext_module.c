@@ -360,9 +360,18 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 	}
 	
 	if (props & NGX_HTTP_DAV_EXT_PROP_getcontenttype) {
-		NGX_HTTP_DAV_EXT_OUTL(
+		if (st.st_mode & S_IFDIR) {
+			NGX_HTTP_DAV_EXT_OUTL(
+						"<D:getcontenttype>"
+							"httpd/unix-directory"
+						"</D:getcontenttype>\n"
+			);
+		} else {
+			/* TODO: detect content type of files */
+			NGX_HTTP_DAV_EXT_OUTL(
 						"<D:getcontenttype/>\n"
 			);
+		}
 	}
 
 	if (props & NGX_HTTP_DAV_EXT_PROP_getetag) {
