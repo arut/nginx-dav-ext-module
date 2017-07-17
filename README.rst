@@ -8,7 +8,7 @@ Copyright |copy| 2012-2017 Arutyunyan Roman (arutyunyan.roman@gmail.com)
 
 .. |copy|   unicode:: U+000A9 .. COPYRIGHT SIGN
 
-For full WebDAV support in NGINX you need to enable standard NGINX 
+For full WebDAV support in NGINX you need to enable the standard NGINX 
 WebDAV module (providing partial WebDAV implementation) as well as 
 this module for missing methods:
 
@@ -25,7 +25,7 @@ The module can be built dynamically:
 Requirements
 ============
 
-	``libexpat-dev``
+``libexpat-dev``
 
 
 Example config
@@ -34,7 +34,6 @@ Example config
 .. code-block::
 
 	location / {
-
 		dav_methods PUT DELETE MKCOL COPY MOVE;
 		dav_ext_methods PROPFIND OPTIONS;
 
