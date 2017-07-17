@@ -1,5 +1,5 @@
 /******************************************************************************
-  Copyright (c) 2012, Roman Arutyunyan (arut@qip.ru)
+  Copyright (c) 2012-2017, Roman Arutyunyan (arutyunyan.roman@gmail.com)
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without modification, 
