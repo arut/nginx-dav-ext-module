@@ -646,6 +646,7 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 static void
 ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 {
+	ngx_table_elt_t         *h;
 	ngx_chain_t             *c;
 	ngx_buf_t               *b;
 	XML_Parser              parser;
@@ -690,6 +691,9 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 	XML_ParserFree(parser);
 
 	if (status == NGX_OK) {
+		h = ngx_list_push(&r->headers_out.headers);
+		ngx_str_set(&h->key, "Content-Type");
+		ngx_str_set(&h->value, "text/xml");
 
 		r->headers_out.status = 207;
 
@@ -763,8 +767,18 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
 				return NGX_HTTP_INTERNAL_SERVER_ERROR;
 			}
 
-			/* FIXME: it looks so ugly because I cannot access nginx dav module */
+			ngx_str_set(&h->key, "Content-Type");
+			ngx_str_set(&h->value, "text/xml");
+			h->hash = 1;
+
+			h = ngx_list_push(&r->headers_out.headers);
+
+			if (h == NULL) {
+				return NGX_HTTP_INTERNAL_SERVER_ERROR;
+			}
+
 			ngx_str_set(&h->key, "Allow");
+			/* FIXME: it looks so ugly because I cannot access nginx dav module */
 			ngx_str_set(&h->value, "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,PROPFIND,OPTIONS");
 			h->hash = 1;
 
