@@ -351,12 +351,14 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
 	}
 
 	if (props & NGX_HTTP_DAV_EXT_PROP_getcontentlength) {
-		NGX_HTTP_DAV_EXT_OUTCB(buf, ngx_snprintf(buf, sizeof(buf), 
+		if (S_ISREG(st.st_mode)) {
+			NGX_HTTP_DAV_EXT_OUTCB(buf, ngx_snprintf(buf, sizeof(buf), 
 						"<D:getcontentlength>"
 							"%O"
 						"</D:getcontentlength>\n", 
 
-			st.st_size) - buf);
+				st.st_size) - buf);
+		}
 	}
 	
 	if (props & NGX_HTTP_DAV_EXT_PROP_getcontenttype) {
