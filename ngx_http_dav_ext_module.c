@@ -190,8 +190,8 @@ static void
 ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
     ngx_int_t flags, u_char *data, ngx_uint_t len)
 {
-    ngx_chain_t *cl;
-    ngx_buf_t   *b;
+    ngx_buf_t    *b;
+    ngx_chain_t  *cl;
 
     if (!len) {
         return; 
@@ -236,7 +236,7 @@ ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
 static void
 ngx_http_dav_ext_flush(ngx_http_request_t *r, ngx_chain_t **ll)
 {
-    ngx_chain_t *cl;
+    ngx_chain_t  *cl;
 
     cl = (*ll)->next;
     (*ll)->next = NULL;
@@ -274,10 +274,10 @@ static ngx_int_t
 ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
     char *path, ngx_str_t *uri, ngx_chain_t **ll, ngx_uint_t props)
 {
-    struct stat   st;
-    struct tm     stm;
-    u_char        buf[256];
-    ngx_str_t     name;
+    ngx_str_t    name;
+    struct tm    stm;
+    struct stat  st;
+    u_char       buf[256];
 
     if (stat(path, &st)) {
 
@@ -405,10 +405,14 @@ static ngx_int_t
 ngx_http_dav_ext_send_propfind_item(ngx_http_request_t *r, char *path,
     ngx_str_t *uri)
 {
-    ngx_http_dav_ext_ctx_t *ctx;
-    ngx_chain_t            *l = NULL, **ll = &l;
-    u_char                 vbuf[8];
-    ngx_str_t              status_line = ngx_string("200 OK");
+    ngx_str_t                status_line = ngx_string("200 OK");
+
+    ngx_chain_t             *l, **ll;
+    ngx_http_dav_ext_ctx_t  *ctx;
+    u_char                   vbuf[8];
+
+    l = NULL;
+    ll = &l;
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_dav_ext_module);
 
@@ -492,7 +496,7 @@ static void
 ngx_http_dav_ext_make_child(ngx_pool_t *pool, ngx_str_t *parent, u_char *child,
     size_t chlen, ngx_str_t *path)
 {
-    u_char *s;
+    u_char  *s;
 
     path->data = ngx_palloc(pool, parent->len + 2 + chlen);
     s = path->data;
@@ -510,16 +514,19 @@ ngx_http_dav_ext_make_child(ngx_pool_t *pool, ngx_str_t *parent, u_char *child,
 static ngx_int_t
 ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 {
-    size_t                    root;
-    ngx_str_t                 path, spath, ruri, suri;
-    ngx_chain_t               *l = NULL, **ll = &l;
-    DIR                       *dir;
-    int                       depth;
-    struct dirent             *de;
-    size_t                    len, uc_len;
-    ngx_http_variable_value_t vv;
-    ngx_str_t                 depth_name = ngx_string("depth");
-    u_char                    *p, *uc;
+    ngx_str_t                   depth_name = ngx_string("depth");
+
+    DIR                        *dir;
+    int                         depth;
+    size_t                      root, len, uc_len;
+    u_char                     *p, *uc;
+    ngx_str_t                   path, spath, ruri, suri;
+    ngx_chain_t                *l, **ll;
+    struct dirent              *de;
+    ngx_http_variable_value_t   vv;
+
+    l = NULL;
+    ll = &l;
 
     if (ngx_http_variable_unknown_header(&vv, &depth_name, 
                 &r->headers_in.headers.part, 0) != NGX_OK)
@@ -634,11 +641,11 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 static void
 ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 {
-    ngx_chain_t             *c;
     ngx_buf_t               *b;
-    XML_Parser              parser;
-    ngx_uint_t              status;
-    ngx_http_dav_ext_ctx_t *ctx;
+    ngx_uint_t               status;
+    XML_Parser               parser;
+    ngx_chain_t             *c;
+    ngx_http_dav_ext_ctx_t  *ctx;
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_dav_ext_module);
 
@@ -655,9 +662,9 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 
     XML_SetUserData(parser, ctx);
 
-    XML_SetElementHandler(parser, 
-            ngx_http_dav_ext_start_xml_elt,
-            ngx_http_dav_ext_end_xml_elt);
+    XML_SetElementHandler(parser,
+                          ngx_http_dav_ext_start_xml_elt,
+                          ngx_http_dav_ext_end_xml_elt);
 
     for(; c != NULL && c->buf != NULL && !c->buf->last_buf; c = c->next) {
 
@@ -707,7 +714,7 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 static ngx_int_t
 ngx_http_dav_ext_handler(ngx_http_request_t *r)
 {
-    ngx_int_t                    rc;
+    ngx_int_t                     rc;
     ngx_table_elt_t              *h;
     ngx_http_dav_ext_loc_conf_t  *delcf;
 
