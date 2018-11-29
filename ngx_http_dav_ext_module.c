@@ -7,45 +7,46 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-
 #include <sys/types.h>
 #include <dirent.h>
 #include <time.h>
-
 #include <expat.h>
+
 
 #define NGX_HTTP_DAV_EXT_OFF             2
 
+
 typedef struct {
-
     ngx_uint_t  methods;
-
 } ngx_http_dav_ext_loc_conf_t;
 
+
 static ngx_int_t ngx_http_dav_ext_init(ngx_conf_t *cf);
-static void * ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf);
-static char * ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
+static void *ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf);
+static char *ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent,
+    void *child);
+
 
 static ngx_conf_bitmask_t  ngx_http_dav_ext_methods_mask[] = {
-
     { ngx_string("off"),      NGX_HTTP_DAV_EXT_OFF },
     { ngx_string("propfind"), NGX_HTTP_PROPFIND    },
     { ngx_string("options"),  NGX_HTTP_OPTIONS     },
     { ngx_null_string,        0                    }
-
 };
+
 
 static ngx_command_t  ngx_http_dav_ext_commands[] = {
 
     { ngx_string("dav_ext_methods"),
-        NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
-        ngx_conf_set_bitmask_slot,
-        NGX_HTTP_LOC_CONF_OFFSET,
-        offsetof(ngx_http_dav_ext_loc_conf_t, methods),
-        &ngx_http_dav_ext_methods_mask },
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+      ngx_conf_set_bitmask_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_dav_ext_loc_conf_t, methods),
+      &ngx_http_dav_ext_methods_mask },
 
-    ngx_null_command
+      ngx_null_command
 };
+
 
 static ngx_http_module_t  ngx_http_dav_ext_module_ctx = {
     NULL,                                  /* preconfiguration */
@@ -77,6 +78,7 @@ ngx_module_t  ngx_http_dav_ext_module = {
     NGX_MODULE_V1_PADDING
 };
 
+
 #define NGX_HTTP_DAV_EXT_NODE_propfind           0x001
 #define NGX_HTTP_DAV_EXT_NODE_prop               0x002
 #define NGX_HTTP_DAV_EXT_NODE_propname           0x004
@@ -98,18 +100,17 @@ ngx_module_t  ngx_http_dav_ext_module = {
 #define NGX_HTTP_DAV_EXT_PROPFIND_NAMES          2
 #define NGX_HTTP_DAV_EXT_PROPFIND_ALL            3
 
+
 typedef struct {
-
-    ngx_uint_t nodes;
-
-    ngx_uint_t props;
-
-    ngx_uint_t propfind;
-
+    ngx_uint_t   nodes;
+    ngx_uint_t   props;
+    ngx_uint_t   propfind;
 } ngx_http_dav_ext_ctx_t;
 
-static int ngx_http_dav_ext_xmlcmp(const char *xname, const char *sname) {
 
+static int
+ngx_http_dav_ext_xmlcmp(const char *xname, const char *sname)
+{
     const char *c;
 
     c = strrchr(xname, ':');
@@ -117,8 +118,10 @@ static int ngx_http_dav_ext_xmlcmp(const char *xname, const char *sname) {
     return strcmp(c ? c + 1 : xname, sname);
 }
 
-static void ngx_http_dav_ext_start_xml_elt(void *user_data, 
-        const XML_Char *name, const XML_Char **atts)
+
+static void
+ngx_http_dav_ext_start_xml_elt(void *user_data, const XML_Char *name,
+    const XML_Char **atts)
 {
     ngx_http_dav_ext_ctx_t *ctx = user_data;
 
@@ -130,10 +133,11 @@ static void ngx_http_dav_ext_start_xml_elt(void *user_data,
     NGX_HTTP_DAV_EXT_SET_NODE(prop);
     NGX_HTTP_DAV_EXT_SET_NODE(propname);
     NGX_HTTP_DAV_EXT_SET_NODE(allprop);
-
 }
 
-static void ngx_http_dav_ext_end_xml_elt(void *user_data, const XML_Char *name)
+
+static void
+ngx_http_dav_ext_end_xml_elt(void *user_data, const XML_Char *name)
 {
     ngx_http_dav_ext_ctx_t *ctx = user_data;
 
@@ -178,12 +182,13 @@ static void ngx_http_dav_ext_end_xml_elt(void *user_data, const XML_Char *name)
     ngx_http_dav_ext_start_xml_elt(user_data, name, NULL);
 }
 
+
 #define NGX_HTTP_DAV_EXT_COPY    0x01
 #define NGX_HTTP_DAV_EXT_ESCAPE  0x02
 
-    static void
+static void
 ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
-        ngx_int_t flags, u_char *data, ngx_uint_t len) 
+    ngx_int_t flags, u_char *data, ngx_uint_t len)
 {
     ngx_chain_t *cl;
     ngx_buf_t   *b;
@@ -194,7 +199,8 @@ ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
 
     if (flags & NGX_HTTP_DAV_EXT_ESCAPE) {
 
-        b = ngx_create_temp_buf(r->pool, len + ngx_escape_html(NULL, data, len));
+        b = ngx_create_temp_buf(r->pool, len
+                                         + ngx_escape_html(NULL, data, len));
         b->last = (u_char*)ngx_escape_html(b->pos, data, len);
 
     } else if (flags & NGX_HTTP_DAV_EXT_COPY) {
@@ -226,7 +232,8 @@ ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
     }
 }
 
-    static void
+
+static void
 ngx_http_dav_ext_flush(ngx_http_request_t *r, ngx_chain_t **ll)
 {
     ngx_chain_t *cl;
@@ -262,9 +269,10 @@ output chains are buffered in circular list & flushed on demand
 #define NGX_HTTP_DAV_EXT_OUTL(s) \
     ngx_http_dav_ext_output(r, ll, 0, (u_char*)(s), sizeof(s) - 1)
 
-    static ngx_int_t
-ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r, 
-        char *path, ngx_str_t *uri, ngx_chain_t **ll, ngx_uint_t props)
+
+static ngx_int_t
+ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
+    char *path, ngx_str_t *uri, ngx_chain_t **ll, ngx_uint_t props)
 {
     struct stat   st;
     struct tm     stm;
@@ -392,9 +400,10 @@ ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
     return NGX_OK;
 }
 
-    static ngx_int_t
-ngx_http_dav_ext_send_propfind_item(ngx_http_request_t *r, 
-        char *path, ngx_str_t *uri)
+
+static ngx_int_t
+ngx_http_dav_ext_send_propfind_item(ngx_http_request_t *r, char *path,
+    ngx_str_t *uri)
 {
     ngx_http_dav_ext_ctx_t *ctx;
     ngx_chain_t            *l = NULL, **ll = &l;
@@ -473,10 +482,15 @@ ngx_http_dav_ext_send_propfind_item(ngx_http_request_t *r,
     return NGX_OK;
 }
 
-/* path returned by this function is terminated
-   with a hidden (out-of-len) null */
-static void ngx_http_dav_ext_make_child(ngx_pool_t *pool, ngx_str_t *parent, 
-        u_char *child, size_t chlen, ngx_str_t *path)
+
+/*
+ * path returned by this function is terminated
+ * with a hidden (out-of-len) null
+ */
+
+static void
+ngx_http_dav_ext_make_child(ngx_pool_t *pool, ngx_str_t *parent, u_char *child,
+    size_t chlen, ngx_str_t *path)
 {
     u_char *s;
 
@@ -490,9 +504,10 @@ static void ngx_http_dav_ext_make_child(ngx_pool_t *pool, ngx_str_t *parent,
     *s = 0;
 }
 
+
 #define DAV_EXT_INFINITY (-1)
 
-    static ngx_int_t
+static ngx_int_t
 ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
 {
     size_t                    root;
@@ -615,7 +630,8 @@ ngx_http_dav_ext_send_propfind(ngx_http_request_t *r)
     return NGX_OK;
 }
 
-    static void
+
+static void
 ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 {
     ngx_chain_t             *c;
@@ -647,7 +663,9 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 
         b = c ->buf;
 
-        if (!XML_Parse(parser, (const char*)b->pos, b->last - b->pos, b->last_buf)) {
+        if (!XML_Parse(parser, (const char*)b->pos, b->last - b->pos,
+                       b->last_buf))
+        {
 
             ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
                     "dav_ext propfind XML error");
@@ -685,7 +703,8 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 
 }
 
-    static ngx_int_t
+
+static ngx_int_t
 ngx_http_dav_ext_handler(ngx_http_request_t *r)
 {
     ngx_int_t                    rc;
@@ -735,9 +754,10 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
                 return NGX_HTTP_INTERNAL_SERVER_ERROR;
             }
 
-            /* FIXME: it looks so ugly because I cannot access nginx dav module */
+            /* XXX: it looks so ugly because I cannot access nginx dav module */
             ngx_str_set(&h->key, "Allow");
-            ngx_str_set(&h->value, "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,PROPFIND,OPTIONS");
+            ngx_str_set(&h->value,
+                        "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,PROPFIND,OPTIONS");
             h->hash = 1;
 
             r->headers_out.status = NGX_HTTP_OK;
@@ -753,7 +773,8 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
     return NGX_DECLINED;
 }
 
-    static void *
+
+static void *
 ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf)
 {
     ngx_http_dav_ext_loc_conf_t  *conf;
@@ -766,7 +787,8 @@ ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf)
     return conf;
 }
 
-    static char *
+
+static char *
 ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 {
     ngx_http_dav_ext_loc_conf_t  *prev = parent;
@@ -778,7 +800,8 @@ ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     return NGX_CONF_OK;
 }
 
-    static ngx_int_t
+
+static ngx_int_t
 ngx_http_dav_ext_init(ngx_conf_t *cf)
 {
     ngx_http_handler_pt        *h;
@@ -796,4 +819,3 @@ ngx_http_dav_ext_init(ngx_conf_t *cf)
 
     return NGX_OK;
 }
-
