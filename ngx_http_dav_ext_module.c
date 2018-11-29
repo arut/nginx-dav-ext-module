@@ -13,7 +13,35 @@
 #include <expat.h>
 
 
-#define NGX_HTTP_DAV_EXT_OFF             2
+#define NGX_HTTP_DAV_EXT_NODE_propfind           0x001
+#define NGX_HTTP_DAV_EXT_NODE_prop               0x002
+#define NGX_HTTP_DAV_EXT_NODE_propname           0x004
+#define NGX_HTTP_DAV_EXT_NODE_allprop            0x008
+
+#define NGX_HTTP_DAV_EXT_PROP_creationdate       0x001
+#define NGX_HTTP_DAV_EXT_PROP_displayname        0x002
+#define NGX_HTTP_DAV_EXT_PROP_getcontentlanguage 0x004
+#define NGX_HTTP_DAV_EXT_PROP_getcontentlength   0x008
+#define NGX_HTTP_DAV_EXT_PROP_getcontenttype     0x010
+#define NGX_HTTP_DAV_EXT_PROP_getetag            0x020
+#define NGX_HTTP_DAV_EXT_PROP_getlastmodified    0x040
+#define NGX_HTTP_DAV_EXT_PROP_lockdiscovery      0x080
+#define NGX_HTTP_DAV_EXT_PROP_resourcetype       0x100
+#define NGX_HTTP_DAV_EXT_PROP_source             0x200
+#define NGX_HTTP_DAV_EXT_PROP_supportedlock      0x400
+
+#define NGX_HTTP_DAV_EXT_PROPFIND_SELECTED       1
+#define NGX_HTTP_DAV_EXT_PROPFIND_NAMES          2
+#define NGX_HTTP_DAV_EXT_PROPFIND_ALL            3
+
+#define NGX_HTTP_DAV_EXT_OFF                     2
+
+
+typedef struct {
+    ngx_uint_t   nodes;
+    ngx_uint_t   props;
+    ngx_uint_t   propfind;
+} ngx_http_dav_ext_ctx_t;
 
 
 typedef struct {
@@ -21,10 +49,26 @@ typedef struct {
 } ngx_http_dav_ext_loc_conf_t;
 
 
-static ngx_int_t ngx_http_dav_ext_init(ngx_conf_t *cf);
+static int ngx_http_dav_ext_xmlcmp(const char *xname, const char *sname);
+static void ngx_http_dav_ext_start_xml_elt(void *user_data,
+    const XML_Char *name, const XML_Char **atts);
+static void ngx_http_dav_ext_end_xml_elt(void *user_data, const XML_Char *name);
+static void ngx_http_dav_ext_output(ngx_http_request_t *r, ngx_chain_t **ll,
+    ngx_int_t flags, u_char *data, ngx_uint_t len);
+static void ngx_http_dav_ext_flush(ngx_http_request_t *r, ngx_chain_t **ll);
+static ngx_int_t ngx_http_dav_ext_send_propfind_atts(ngx_http_request_t *r,
+    char *path, ngx_str_t *uri, ngx_chain_t **ll, ngx_uint_t props);
+static ngx_int_t ngx_http_dav_ext_send_propfind_item(ngx_http_request_t *r,
+    char *path, ngx_str_t *uri);
+static void ngx_http_dav_ext_make_child(ngx_pool_t *pool, ngx_str_t *parent,
+    u_char *child, size_t chlen, ngx_str_t *path);
+static ngx_int_t ngx_http_dav_ext_send_propfind(ngx_http_request_t *r);
+static void ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_dav_ext_handler(ngx_http_request_t *r);
 static void *ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent,
     void *child);
+static ngx_int_t ngx_http_dav_ext_init(ngx_conf_t *cf);
 
 
 static ngx_conf_bitmask_t  ngx_http_dav_ext_methods_mask[] = {
@@ -77,35 +121,6 @@ ngx_module_t  ngx_http_dav_ext_module = {
     NULL,                                  /* exit master */
     NGX_MODULE_V1_PADDING
 };
-
-
-#define NGX_HTTP_DAV_EXT_NODE_propfind           0x001
-#define NGX_HTTP_DAV_EXT_NODE_prop               0x002
-#define NGX_HTTP_DAV_EXT_NODE_propname           0x004
-#define NGX_HTTP_DAV_EXT_NODE_allprop            0x008
-
-#define NGX_HTTP_DAV_EXT_PROP_creationdate       0x001
-#define NGX_HTTP_DAV_EXT_PROP_displayname        0x002
-#define NGX_HTTP_DAV_EXT_PROP_getcontentlanguage 0x004
-#define	NGX_HTTP_DAV_EXT_PROP_getcontentlength   0x008
-#define NGX_HTTP_DAV_EXT_PROP_getcontenttype     0x010
-#define NGX_HTTP_DAV_EXT_PROP_getetag            0x020
-#define NGX_HTTP_DAV_EXT_PROP_getlastmodified    0x040
-#define NGX_HTTP_DAV_EXT_PROP_lockdiscovery      0x080
-#define NGX_HTTP_DAV_EXT_PROP_resourcetype       0x100
-#define NGX_HTTP_DAV_EXT_PROP_source             0x200
-#define NGX_HTTP_DAV_EXT_PROP_supportedlock      0x400
-
-#define NGX_HTTP_DAV_EXT_PROPFIND_SELECTED       1
-#define NGX_HTTP_DAV_EXT_PROPFIND_NAMES          2
-#define NGX_HTTP_DAV_EXT_PROPFIND_ALL            3
-
-
-typedef struct {
-    ngx_uint_t   nodes;
-    ngx_uint_t   props;
-    ngx_uint_t   propfind;
-} ngx_http_dav_ext_ctx_t;
 
 
 static int
