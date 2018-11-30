@@ -20,6 +20,20 @@ The module can be built dynamically:
 
     $ ./configure --with-http_dav_module --add-dynamic-module=/path/to/this-module
 
+Directives
+==========
+
+dav_ext_methods
+---------------
+
+========== ====
+*Syntax:*  ``dav_ext_methods [PROPFIND] [OPTIONS]``
+*Context:* http, server, location
+========== ====
+
+Enables support for the specified WebDAV methods in the current scope.
+
+
 Requirements
 ============
 
