@@ -420,16 +420,22 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
 
     *last++ = '/';
 
-    name.data = r->uri.data + r->uri.len - 1;
-    name.len = 1;
+    if (r->uri.len < 2) {
+        name = r->uri;
 
-    while (name.len < r->uri.len) {
-        if (r->uri.data[r->uri.len - name.len - 1] == '/') {
-            break;
+    } else {
+        name.data = &r->uri.data[r->uri.len - 1];
+        name.len = (name.data[0] == '/') ? 0 : 1;
+
+        while (name.data != r->uri.data) {
+            p = name.data - 1;
+            if (*p == '/') {
+                break;
+            }
+
+            name.data--;
+            name.len++;
         }
-
-        name.data--;
-        name.len++;
     }
 
     if (r->valid_unparsed_uri) {
