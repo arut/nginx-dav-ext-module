@@ -509,28 +509,6 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
 
         ngx_memzero(entry, sizeof(ngx_http_dav_ext_entry_t));
 
-        escape = 2 * ngx_escape_uri(NULL, name.data, name.len,
-                                    NGX_ESCAPE_URI_COMPONENT);
-
-        p = ngx_pnalloc(r->pool, uri.len + 1 + name.len + escape);
-        if (p == NULL) {
-            rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
-            break;
-        }
-
-        entry->uri.data = p;
-
-        p = ngx_cpymem(p, uri.data, uri.len);
-
-        if (uri.len && uri.data[uri.len - 1] != '/') {
-            *p++ = '/';
-        }
-
-        p = (u_char *) ngx_escape_uri(p, name.data, name.len,
-                                      NGX_ESCAPE_URI_COMPONENT);
-
-        entry->uri.len = p - entry->uri.data;
-
         if (!dir.valid_info) {
 
             if (path.len + 1 + name.len + 1 > allocated) {
@@ -556,6 +534,32 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
                 continue;
             }
         }
+
+        escape = 2 * ngx_escape_uri(NULL, name.data, name.len,
+                                    NGX_ESCAPE_URI_COMPONENT);
+
+        p = ngx_pnalloc(r->pool, uri.len + 1 + name.len + escape + 1);
+        if (p == NULL) {
+            rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
+            break;
+        }
+
+        entry->uri.data = p;
+
+        p = ngx_cpymem(p, uri.data, uri.len);
+
+        if (uri.len && uri.data[uri.len - 1] != '/') {
+            *p++ = '/';
+        }
+
+        p = (u_char *) ngx_escape_uri(p, name.data, name.len,
+                                      NGX_ESCAPE_URI_COMPONENT);
+
+        if (ngx_de_is_dir(&dir)) {
+            *p++ = '/';
+        }
+
+        entry->uri.len = p - entry->uri.data;
 
         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "http dav_ext propfind child name:\"%V\", uri:\"%V\"",
