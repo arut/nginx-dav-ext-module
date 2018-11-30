@@ -12,7 +12,7 @@ missing methods:
 
 .. code-block:: bash
 
-    $ ./configure --with-http_dav_module --add-module=/path/to/this-module
+    $ ./configure --with-http_dav_module --add-module=/path/to/nginx-dav-module
 
 The module can be built dynamically:
 
@@ -45,9 +45,9 @@ Example config
 
 .. code-block::
 
-	location / {
-		dav_methods PUT DELETE MKCOL COPY MOVE;
-		dav_ext_methods PROPFIND OPTIONS;
+    location / {
+        dav_methods PUT DELETE MKCOL COPY MOVE;
+        dav_ext_methods PROPFIND OPTIONS;
 
-		root /var/root/;
-	}
+        root /var/root/;
+    }
