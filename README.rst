@@ -12,13 +12,13 @@ missing methods:
 
 .. code-block:: bash
 
-    $ ./configure --with-http_dav_module --add-module=/path/to/nginx-dav-module
+    $ ./configure --with-http_dav_module --add-module=/path/to/nginx-dav-ext-module
 
 The module can be built dynamically:
 
 .. code-block:: bash
 
-    $ ./configure --with-http_dav_module --add-dynamic-module=/path/to/nginx-dav-module
+    $ ./configure --with-http_dav_module --add-dynamic-module=/path/to/nginx-dav-ext-module
 
 Directives
 ==========
