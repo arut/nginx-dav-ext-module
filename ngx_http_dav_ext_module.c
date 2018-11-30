@@ -200,6 +200,7 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
 static void
 ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 {
+    off_t                    len;
     ngx_buf_t               *b;
     XML_Parser               parser;
     ngx_chain_t             *cl;
@@ -229,6 +230,8 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
     XML_SetElementHandler(parser, ngx_http_dav_ext_start_xml_elt,
                           ngx_http_dav_ext_end_xml_elt);
 
+    len = 0;
+
     for (cl = r->request_body->bufs; cl; cl = cl->next) {
         b = cl->buf;
 
@@ -242,6 +245,8 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
             ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
             return;
         }
+
+        len += b->last - b->pos;
 
         if (!XML_Parse(parser, (const char*) b->pos, b->last - b->pos,
                        b->last_buf))
@@ -257,6 +262,10 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
     }
 
     XML_ParserFree(parser);
+
+    if (len == 0) {
+        ctx->props = NGX_HTTP_DAV_EXT_PROP_ALL;
+    }
 
     ngx_http_finalize_request(r, ngx_http_dav_ext_propfind(r));
 }
