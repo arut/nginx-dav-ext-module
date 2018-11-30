@@ -2,15 +2,13 @@
 nginx-dav-ext-module
 ********************
 
-NGINX WebDAV missing commands support (PROPFIND & OPTIONS)
-
-Copyright |copy| 2012-2018 Arutyunyan Roman (arutyunyan.roman@gmail.com)
+NGINX WebDAV PROPFIND and OPTIONS commands support.
 
 .. |copy|   unicode:: U+000A9 .. COPYRIGHT SIGN
 
-For full WebDAV support in NGINX you need to enable the standard NGINX 
-WebDAV module (providing partial WebDAV implementation) as well as 
-this module for missing methods:
+For full WebDAV support in NGINX you need to enable the standard NGINX WebDAV
+module providing partial WebDAV implementation, as well as this module for the
+missing methods:
 
 .. code-block:: bash
 
