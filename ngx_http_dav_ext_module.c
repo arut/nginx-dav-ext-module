@@ -14,24 +14,23 @@
 
 #define NGX_HTTP_DAV_EXT_PREALLOCATE              50
 
-#define NGX_HTTP_DAV_EXT_NODE_PROPFIND            0x001
-#define NGX_HTTP_DAV_EXT_NODE_PROP                0x002
-#define NGX_HTTP_DAV_EXT_NODE_PROPNAME            0x004
-#define NGX_HTTP_DAV_EXT_NODE_ALLPROP             0x008
+#define NGX_HTTP_DAV_EXT_NODE_PROPFIND            0x01
+#define NGX_HTTP_DAV_EXT_NODE_PROP                0x02
+#define NGX_HTTP_DAV_EXT_NODE_PROPNAME            0x04
+#define NGX_HTTP_DAV_EXT_NODE_ALLPROP             0x08
 
-#define NGX_HTTP_DAV_EXT_PROP_DISPLAYNAME         0x001
-#define NGX_HTTP_DAV_EXT_PROP_GETCONTENTLENGTH    0x002
-#define NGX_HTTP_DAV_EXT_PROP_GETLASTMODIFIED     0x004
-#define NGX_HTTP_DAV_EXT_PROP_RESOURCETYPE        0x008
-#define NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY       0x010
-#define NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK       0x020
+#define NGX_HTTP_DAV_EXT_PROP_DISPLAYNAME         0x01
+#define NGX_HTTP_DAV_EXT_PROP_GETCONTENTLENGTH    0x02
+#define NGX_HTTP_DAV_EXT_PROP_GETLASTMODIFIED     0x04
+#define NGX_HTTP_DAV_EXT_PROP_RESOURCETYPE        0x08
+#define NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY       0x10
+#define NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK       0x20
 
-#define NGX_HTTP_DAV_EXT_PROP_ALL                 0x7ff
-#define NGX_HTTP_DAV_EXT_PROP_NAMES               0x800
+#define NGX_HTTP_DAV_EXT_PROP_ALL                 0x7f
+#define NGX_HTTP_DAV_EXT_PROP_NAMES               0x80
 
 
 typedef struct {
-    ngx_uint_t   status;
     ngx_str_t    uri;
     ngx_str_t    name;
     ngx_uint_t   dir;  /* unsigned  dir:1; */
@@ -134,15 +133,12 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "http dav_ext handler");
-
     switch (r->method) {
 
     case NGX_HTTP_PROPFIND:
 
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "dav_ext propfind");
+                       "http dav_ext propfind");
 
         rc = ngx_http_read_client_request_body(r,
                                             ngx_http_dav_ext_propfind_handler);
@@ -155,7 +151,13 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
     case NGX_HTTP_OPTIONS:
 
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "dav_ext options");
+                       "http dav_ext options");
+
+        rc = ngx_http_discard_request_body(r);
+
+        if (rc != NGX_OK) {
+            return rc;
+        }
 
         h = ngx_list_push(&r->headers_out.headers);
         if (h == NULL) {
@@ -235,7 +237,7 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
             XML_ParserFree(parser);
 
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "DAV client body in file, "
+                          "PROPFIND client body is in file, "
                           "you may want to increase client_body_buffer_size");
 
             ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
@@ -260,6 +262,11 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
     XML_ParserFree(parser);
 
     if (len == 0) {
+        /*
+         * For easier debugging treat bodiless requests
+         * as if they expect all properties.
+         */
+
         ctx->props = NGX_HTTP_DAV_EXT_PROP_ALL;
     }
 
@@ -354,10 +361,11 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
     size_t                     root, allocated;
     u_char                    *p, *last, *filename;
     uintptr_t                  escape;
-    ngx_int_t                  depth, rc;
+    ngx_int_t                  rc;
     ngx_err_t                  err;
     ngx_str_t                  path, name, uri;
     ngx_dir_t                  dir;
+    ngx_uint_t                 depth;
     ngx_array_t                entries;
     ngx_file_info_t            fi;
     ngx_http_dav_ext_entry_t  *entry;
@@ -386,10 +394,12 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
 
     if (path.len > 1 && path.data[path.len - 1] == '/') {
         path.len--;
-        last--;
+
+    } else {
+        last++;
     }
 
-    *last = '\0';
+    path.data[path.len] = '\0';
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "http dav_ext propfind path: \"%s\"", path.data);
@@ -397,8 +407,6 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
     if (ngx_file_info(path.data, &fi) == NGX_FILE_ERROR) {
         return NGX_HTTP_NOT_FOUND;
     }
-
-    *last++ = '/';
 
     if (r->uri.len < 2) {
         name = r->uri;
@@ -451,7 +459,6 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
     ngx_memzero(entry, sizeof(ngx_http_dav_ext_entry_t));
 
     entry->uri = uri;
-    entry->status = NGX_HTTP_OK;
     entry->name = name;
     entry->dir = ngx_is_dir(&fi);
     entry->mtime = ngx_file_mtime(&fi);
@@ -470,6 +477,7 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
     rc = NGX_OK;
 
     filename = path.data;
+    filename[path.len] = '/';
 
     for ( ;; ) {
         ngx_set_errno(0);
@@ -524,9 +532,8 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
             if (ngx_de_info(filename, &dir) == NGX_FILE_ERROR) {
                 ngx_log_error(NGX_LOG_CRIT, r->connection->log, ngx_errno,
                               ngx_de_info_n " \"%s\" failed", filename);
-
-                entry->status = NGX_HTTP_FORBIDDEN;
-                continue;
+                rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
+                break;
             }
         }
 
@@ -567,10 +574,10 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
         }
 
         ngx_memcpy(p, name.data, name.len);
+
         entry->name.data = p;
         entry->name.len = name.len;
 
-        entry->status = NGX_HTTP_OK;
         entry->dir = ngx_de_is_dir(&dir);
         entry->mtime = ngx_de_mtime(&dir);
         entry->size = ngx_de_size(&dir);
@@ -597,9 +604,9 @@ ngx_http_dav_ext_depth(ngx_http_request_t *r)
     /*
      * We do not support infinity depth as allowed by RFC4918:
      *
-     *   In practice, support for infinite-depth requests
-     *   MAY be disabled, due to the performance and security
-     *   concerns associated with this behavior.
+     * In practice, support for infinite-depth requests
+     * MAY be disabled, due to the performance and security
+     * concerns associated with this behavior.
      */
 
     depth = r->headers_in.depth;
@@ -624,7 +631,8 @@ ngx_http_dav_ext_depth(ngx_http_request_t *r)
             && ngx_strcmp(depth->value.data, "infinity") == 0)
         {
             /*
-             * RFC4918:
+             * RFC4918 allows us to return 403 error in this case.
+             * However we do not return the precondition code.
              *
              * 403 Forbidden -  A server MAY reject PROPFIND requests on
              * collections with depth header of "Infinity", in which case
@@ -699,7 +707,7 @@ ngx_http_dav_ext_propfind_send_response(ngx_http_request_t *r,
     ngx_str_set(&r->headers_out.content_type, "text/xml");
     r->headers_out.content_type_lowcase = NULL;
 
-    ngx_str_set(&r->headers_out.charset, "utf-8"); /* XXX */
+    ngx_str_set(&r->headers_out.charset, "utf-8");
 
     rc = ngx_http_send_header(r);
 
@@ -716,7 +724,6 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
     ngx_http_dav_ext_entry_t *entry)
 {
     size_t                   len;
-    ngx_str_t                status_line;
     ngx_http_dav_ext_ctx_t  *ctx;
 
     static u_char head[] = 
@@ -732,14 +739,9 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
 
     /* properties */
 
-    static u_char status[] =
-        "</D:prop>\n"
-        "<D:status>HTTP/";
-
-    /* major.minor status_line */
-
     static u_char tail[] =
-        "</D:status>\n"
+        "</D:prop>\n"
+        "<D:status>HTTP/1.1 200 OK</D:status>\n"
         "</D:propstat>\n"
         "</D:response>\n";
 
@@ -753,29 +755,13 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_dav_ext_module);
 
-    switch (entry->status) {
-    case NGX_HTTP_OK:
-        ngx_str_set(&status_line, "200 OK");
-        break;
-
-    case NGX_HTTP_FORBIDDEN:
-        ngx_str_set(&status_line, "403 Forbidden");
-        break;
-
-    default:
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
     if (dst == NULL) {
         len = sizeof(head) - 1
               + sizeof(prop) - 1
-              + sizeof(status) - 1
               + sizeof(tail) - 1;
 
         len += entry->uri.len + ngx_escape_html(NULL, entry->uri.data,
                                                 entry->uri.len);
-
-        len += sizeof("65536") + sizeof("65536") + status_line.len;
 
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_NAMES) {
             len += sizeof(names) - 1;
@@ -863,9 +849,6 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
         }
     }
 
-    dst = ngx_cpymem(dst, status, sizeof(status) - 1);
-    dst = ngx_sprintf(dst, "%d.%d %V", r->http_major, r->http_major,
-                      &status_line);
     dst = ngx_cpymem(dst, tail, sizeof(tail) - 1);
 
     return (uintptr_t) dst;
