@@ -43,7 +43,7 @@ Requirements
 Testing
 =======
 
-Module tests require Perl HTTP::DAV library.
+The module tests require standard NGINX tests_ and Perl HTTP::DAV library.
 
 .. code-block:: bash
 
@@ -65,3 +65,4 @@ Example config
     }
 
 .. _ngx_http_dav_module: http://nginx.org/en/docs/http/ngx_http_dav_module.html
+.. _tests: http://hg.nginx.org/nginx-tests
