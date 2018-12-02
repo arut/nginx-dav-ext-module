@@ -6,7 +6,7 @@ NGINX WebDAV PROPFIND and OPTIONS commands support.
 
 .. |copy|   unicode:: U+000A9 .. COPYRIGHT SIGN
 
-For full WebDAV support in NGINX you need to enable the standard NGINX
+For full WebDAV support in NGINX you need to enable the standard
 ngx_http_dav_module_ providing partial WebDAV implementation, as well as this
 module for the missing methods:
 
