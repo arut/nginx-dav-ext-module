@@ -2,7 +2,7 @@
 
 # (C) Roman Arutyunyan
 
-# Tests for nginx dav module.
+# Tests for nginx-dav-ext-module.
 
 ###############################################################################
 
