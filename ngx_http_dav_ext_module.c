@@ -126,11 +126,11 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
 {
     ngx_int_t                     rc;
     ngx_table_elt_t              *h;
-    ngx_http_dav_ext_loc_conf_t  *delcf;
+    ngx_http_dav_ext_loc_conf_t  *dlcf;
 
-    delcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
+    dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
 
-    if (!(r->method & delcf->methods)) {
+    if (!(r->method & dlcf->methods)) {
         return NGX_DECLINED;
     }
 
