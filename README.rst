@@ -40,6 +40,18 @@ Requirements
 ``libexpat-dev``
 
 
+Testing
+=======
+
+Module tests require Perl HTTP::DAV library.
+
+.. code-block:: bash
+
+    $ export PERL5LIB=/path/to/nginx-tests/lib
+    $ export TEST_NGINX_BINARY=/path/to/nginx
+    $ prove t
+
+
 Example config
 ==============
 
