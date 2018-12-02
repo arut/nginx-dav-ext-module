@@ -23,14 +23,10 @@
 #define NGX_HTTP_DAV_EXT_PROP_GETCONTENTLENGTH    0x002
 #define NGX_HTTP_DAV_EXT_PROP_GETLASTMODIFIED     0x004
 #define NGX_HTTP_DAV_EXT_PROP_RESOURCETYPE        0x008
-#define NGX_HTTP_DAV_EXT_PROP_GETETAG             0x010
-#define NGX_HTTP_DAV_EXT_PROP_CREATIONDATE        0x020
-#define NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY       0x040
-#define NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK       0x080
-#define NGX_HTTP_DAV_EXT_PROP_GETCONTENTTYPE      0x100
-#define NGX_HTTP_DAV_EXT_PROP_GETCONTENTLANGUAGE  0x200
+#define NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY       0x010
+#define NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK       0x020
 
-#define NGX_HTTP_DAV_EXT_PROP_ALL                 0x3ff
+#define NGX_HTTP_DAV_EXT_PROP_ALL                 0x7ff
 #define NGX_HTTP_DAV_EXT_PROP_NAMES               0x800
 
 
@@ -319,28 +315,12 @@ ngx_http_dav_ext_end_xml_elt(void *user_data, const XML_Char *name)
                 ctx->props |= NGX_HTTP_DAV_EXT_PROP_RESOURCETYPE;
             }
 
-            if (ngx_http_dav_ext_xmlcmp(name, "getetag") == 0) {
-                ctx->props |= NGX_HTTP_DAV_EXT_PROP_GETETAG;
-            }
-
-            if (ngx_http_dav_ext_xmlcmp(name, "creationdate") == 0) {
-                ctx->props |= NGX_HTTP_DAV_EXT_PROP_CREATIONDATE;
-            }
-
             if (ngx_http_dav_ext_xmlcmp(name, "lockdiscovery") == 0) {
                 ctx->props |= NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY;
             }
 
             if (ngx_http_dav_ext_xmlcmp(name, "supportedlock") == 0) {
                 ctx->props |= NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK;
-            }
-
-            if (ngx_http_dav_ext_xmlcmp(name, "getcontenttype") == 0) {
-                ctx->props |= NGX_HTTP_DAV_EXT_PROP_GETCONTENTTYPE;
-            }
-
-            if (ngx_http_dav_ext_xmlcmp(name, "getcontentlanguage") == 0) {
-                ctx->props |= NGX_HTTP_DAV_EXT_PROP_GETCONTENTLANGUAGE;
             }
         }
 
@@ -768,12 +748,8 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
         "<D:getcontentlength/>\n"
         "<D:getlastmodified/>\n"
         "<D:resourcetype/>\n"
-        "<D:getetag/>\n"
-        "<D:creationdate/>\n"
         "<D:lockdiscovery/>\n"
-        "<D:supportedlock/>\n"
-        "<D:getcontenttype/>\n"
-        "<D:getcontentlanguage/>\n";
+        "<D:supportedlock/>\n";
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_dav_ext_module);
 
@@ -819,12 +795,8 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
                           "<D:collection/>"
                           "</D:resourcetype>\n"
 
-                          "<D:getetag/>\n"
-                          "<D:creationdate/>\n"
                           "<D:lockdiscovery/>\n"
-                          "<D:supportedlock/>\n"
-                          "<D:getcontenttype/>\n"
-                          "<D:getcontentlanguage/>\n") - 1;
+                          "<D:supportedlock/>\n") - 1;
 
             /* displayname */
             len += entry->name.len
@@ -880,16 +852,6 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
                              sizeof("</D:resourcetype>\n") - 1);
         }
 
-        if (ctx->props & NGX_HTTP_DAV_EXT_PROP_GETETAG) {
-            dst = ngx_cpymem(dst, "<D:getetag/>\n",
-                             sizeof("<D:getetag/>\n") - 1);
-        }
-
-        if (ctx->props & NGX_HTTP_DAV_EXT_PROP_CREATIONDATE) {
-            dst = ngx_cpymem(dst, "<D:creationdate/>\n",
-                             sizeof("<D:creationdate/>\n") - 1);
-        }
-
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY) {
             dst = ngx_cpymem(dst, "<D:lockdiscovery/>\n",
                              sizeof("<D:lockdiscovery/>\n") - 1);
@@ -898,16 +860,6 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK) {
             dst = ngx_cpymem(dst, "<D:supportedlock/>\n",
                              sizeof("<D:supportedlock/>\n") - 1);
-        }
-
-        if (ctx->props & NGX_HTTP_DAV_EXT_PROP_GETCONTENTTYPE) {
-            dst = ngx_cpymem(dst, "<D:getcontenttype/>\n",
-                             sizeof("<D:getcontenttype/>\n") - 1);
-        }
-
-        if (ctx->props & NGX_HTTP_DAV_EXT_PROP_GETCONTENTLANGUAGE) {
-            dst = ngx_cpymem(dst, "<D:getcontentlanguage/>\n",
-                             sizeof("<D:getcontentlanguage/>\n") - 1);
         }
     }
 
