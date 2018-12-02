@@ -46,10 +46,10 @@ Example config
 .. code-block::
 
     location / {
+        root /data/www;
+
         dav_methods PUT DELETE MKCOL COPY MOVE;
         dav_ext_methods PROPFIND OPTIONS;
-
-        root /var/root/;
     }
 
 .. _ngx_http_dav_module: http://nginx.org/en/docs/http/ngx_http_dav_module.html
