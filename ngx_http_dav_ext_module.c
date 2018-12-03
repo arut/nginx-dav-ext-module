@@ -31,26 +31,44 @@
 
 
 typedef struct {
-    ngx_str_t    uri;
-    ngx_str_t    name;
-    ngx_uint_t   dir;  /* unsigned  dir:1; */
-    time_t       mtime;
-    off_t        size;
+    ngx_str_t                    uri;
+    ngx_str_t                    name;
+    ngx_uint_t                   dir;  /* unsigned  dir:1; */
+    time_t                       mtime;
+    off_t                        size;
 } ngx_http_dav_ext_entry_t;
 
 
 typedef struct {
-    ngx_uint_t   nodes;
-    ngx_uint_t   props;
+    ngx_uint_t                   nodes;
+    ngx_uint_t                   props;
 } ngx_http_dav_ext_ctx_t;
 
 
 typedef struct {
-    ngx_uint_t   methods;
+    ngx_uint_t                   methods;
+    ngx_shm_zone_t              *shm_zone;
 } ngx_http_dav_ext_loc_conf_t;
 
 
-static ngx_int_t ngx_http_dav_ext_handler(ngx_http_request_t *r);
+typedef struct {
+    ngx_rbtree_t                 rbtree;
+    ngx_rbtree_node_t            sentinel;
+    ngx_queue_t                  queue;
+} ngx_http_dav_ext_lock_sh_t;
+
+
+typedef struct {
+    time_t                       timeout;
+    ngx_slab_pool_t             *shpool;
+    ngx_http_dav_ext_lock_sh_t  *sh;
+} ngx_http_dav_ext_lock_t;
+
+
+static ngx_int_t ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_dav_ext_verify_lock(ngx_http_request_t *r,
+    ngx_str_t *uri);
+static ngx_int_t ngx_http_dav_ext_content_handler(ngx_http_request_t *r);
 static void ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r);
 static void ngx_http_dav_ext_start_xml_elt(void *user_data,
     const XML_Char *name, const XML_Char **atts);
@@ -62,9 +80,17 @@ static ngx_int_t ngx_http_dav_ext_propfind_send_response(ngx_http_request_t *r,
     ngx_array_t *entries);
 static uintptr_t ngx_http_dav_ext_format_entry(ngx_http_request_t *r,
     u_char *dst, ngx_http_dav_ext_entry_t *entry);
+static void ngx_http_dav_ext_rbtree_insert_value(ngx_rbtree_node_t *temp,
+    ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel);
+static ngx_int_t ngx_http_dav_ext_init_zone(ngx_shm_zone_t *shm_zone,
+    void *data);
 static void *ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent,
     void *child);
+static char *ngx_http_dav_ext_lock_zone(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf);
+static char *ngx_http_dav_ext_lock(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf);
 static ngx_int_t ngx_http_dav_ext_init(ngx_conf_t *cf);
 
 
@@ -72,6 +98,8 @@ static ngx_conf_bitmask_t  ngx_http_dav_ext_methods_mask[] = {
     { ngx_string("off"),      NGX_HTTP_DAV_EXT_OFF },
     { ngx_string("propfind"), NGX_HTTP_PROPFIND    },
     { ngx_string("options"),  NGX_HTTP_OPTIONS     },
+    { ngx_string("lock"),     NGX_HTTP_LOCK        },
+    { ngx_string("unlock"),   NGX_HTTP_UNLOCK      },
     { ngx_null_string,        0                    }
 };
 
@@ -84,6 +112,20 @@ static ngx_command_t  ngx_http_dav_ext_commands[] = {
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_dav_ext_loc_conf_t, methods),
       &ngx_http_dav_ext_methods_mask },
+
+    { ngx_string("dav_ext_lock_zone"),
+      NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE12,
+      ngx_http_dav_ext_lock_zone,
+      0,
+      0,
+      NULL },
+
+    { ngx_string("dav_ext_lock"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+      ngx_http_dav_ext_lock,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      0,
+      NULL },
 
       ngx_null_command
 };
@@ -121,7 +163,76 @@ ngx_module_t  ngx_http_dav_ext_module = {
 
 
 static ngx_int_t
-ngx_http_dav_ext_handler(ngx_http_request_t *r)
+ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r)
+{
+    ngx_str_t                     uri;
+    ngx_int_t                     rc;
+    ngx_table_elt_t              *dest;
+    ngx_http_dav_ext_loc_conf_t  *dlcf;
+
+    dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
+
+    if (dlcf->shm_zone == NULL) {
+        return NGX_DECLINED;
+    }
+
+    if (r->method & (NGX_HTTP_PUT|NGX_HTTP_DELETE|NGX_HTTP_MKCOL|NGX_HTTP_MOVE))
+    {
+        rc = ngx_http_dav_ext_verify_lock(r, &r->uri);
+        if (rc != NGX_OK) {
+            return rc;
+        }
+    }
+
+    if (r->method & (NGX_HTTP_MOVE|NGX_HTTP_COPY)) {
+        dest = r->headers_in.destination;
+        if (dest == NULL) {
+            return NGX_DECLINED;
+        }
+
+        uri = dest->value;
+
+        /* XXX strip prefix */
+
+        rc = ngx_http_dav_ext_verify_lock(r, &uri);
+        if (rc != NGX_OK) {
+            return rc;
+        }
+    }
+
+    /* XXX DELETE must remove lock if any */
+
+    return NGX_DECLINED;
+}
+
+
+static ngx_int_t
+ngx_http_dav_ext_verify_lock(ngx_http_request_t *r, ngx_str_t *uri)
+{
+    ngx_http_dav_ext_lock_t      *lock;
+    ngx_http_dav_ext_loc_conf_t  *dlcf;
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "http dav_ext check lock \"%V\"", uri);
+
+    dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
+
+    lock = dlcf->shm_zone->data;
+
+    /* XXX search up */
+    /* XXX check timeout not expired */
+    /* XXX verify lock token */
+
+    if (0) {
+        return 423; /* Locked */
+    }
+
+    return NGX_OK;
+}
+
+
+static ngx_int_t
+ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
 {
     ngx_int_t                     rc;
     ngx_table_elt_t              *h;
@@ -165,7 +276,8 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
         }
 
         ngx_str_set(&h->key, "DAV");
-        ngx_str_set(&h->value, "1");
+        h->value.len = 1;
+        h->value.data = (u_char *) (dlcf->shm_zone ? "2" : "1");
         h->hash = 1;
 
         h = ngx_list_push(&r->headers_out.headers);
@@ -189,6 +301,87 @@ ngx_http_dav_ext_handler(ngx_http_request_t *r)
         }
 
         return ngx_http_send_special(r, NGX_HTTP_LAST);
+
+    case NGX_HTTP_LOCK:
+
+        if (dlcf->shm_zone == NULL) {
+            return NGX_HTTP_NOT_ALLOWED;
+        }
+
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "http dav_ext unlock");
+
+        /*
+         * Body is expected to have lock type, but since we
+         * only support write/exclusive locks, we ignore it.
+         * Ideally we could produce an error if a lock of
+         * another type is requested, but the amount of work
+         * required for that is not worth it.
+         */
+
+        rc = ngx_http_discard_request_body(r);
+
+        if (rc != NGX_OK) {
+            return rc;
+        }
+
+        /*
+         * XXX
+         * - search up and down, verify timeouts
+         * - if conflict is found then return error
+         * - stat file, if missing then create an empty file
+         */
+
+        /* XXX use depth from input header, default is infinity */
+
+        /* XXX refresh locks if no body */
+
+#if 0
+        <?xml version="1.0" encoding="utf-8" ?>
+        <D:prop xmlns:D="DAV:">
+          <D:lockdiscovery>
+            <D:activelock>
+              <D:locktype><D:write/></D:locktype>
+              <D:lockscope><D:exclusive/></D:lockscope>
+              <D:depth>infinity</D:depth>
+              <D:owner></D:owner>
+              <D:timeout>Second-604800</D:timeout>
+              <D:locktoken>
+                <D:href>urn:deadbeef</D:href>
+              </D:locktoken>
+              <D:lockroot>
+                <D:href>/workspace/webdav/proposal.doc</D:href>
+              </D:lockroot>
+            </D:activelock>
+          </D:lockdiscovery>
+        </D:prop>
+
+        Also, put lock token in the Lock-Token output header
+#endif
+
+        return NGX_HTTP_NO_CONTENT;
+
+    case NGX_HTTP_UNLOCK:
+
+        if (dlcf->shm_zone == NULL) {
+            return NGX_HTTP_NOT_ALLOWED;
+        }
+
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "http dav_ext unlock");
+
+        rc = ngx_http_discard_request_body(r);
+
+        if (rc != NGX_OK) {
+            return rc;
+        }
+
+        /*
+         * XXX
+         * - remove the lock if found, check Lock-Token header
+         */
+
+        return NGX_HTTP_NO_CONTENT;
     }
 
     return NGX_DECLINED;
@@ -855,6 +1048,65 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
 }
 
 
+static void
+ngx_http_dav_ext_rbtree_insert_value(ngx_rbtree_node_t *temp,
+    ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel)
+{
+    /* XXX */
+}
+
+
+static ngx_int_t
+ngx_http_dav_ext_init_zone(ngx_shm_zone_t *shm_zone, void *data)
+{
+    ngx_http_dav_ext_lock_t *olock = data;
+
+    size_t                    len;
+    ngx_http_dav_ext_lock_t  *lock;
+
+    lock = shm_zone->data;
+
+    if (olock) {
+        lock->sh = olock->sh;
+        lock->shpool = olock->shpool;
+        return NGX_OK;
+    }
+
+    lock->shpool = (ngx_slab_pool_t *) shm_zone->shm.addr;
+
+    if (shm_zone->shm.exists) {
+        lock->sh = lock->shpool->data;
+        return NGX_OK;
+    }
+
+    lock->sh = ngx_slab_alloc(lock->shpool, sizeof(ngx_http_dav_ext_lock_sh_t));
+    if (lock->sh == NULL) {
+        return NGX_ERROR;
+    }
+
+    lock->shpool->data = lock->sh;
+
+    ngx_rbtree_init(&lock->sh->rbtree, &lock->sh->sentinel,
+                    ngx_http_dav_ext_rbtree_insert_value);
+
+    ngx_queue_init(&lock->sh->queue);
+
+    len = sizeof(" in dav_ext zone \"\"") + shm_zone->shm.name.len;
+
+    lock->shpool->log_ctx = ngx_slab_alloc(lock->shpool, len);
+    if (lock->shpool->log_ctx == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_sprintf(lock->shpool->log_ctx, " in dav_ext zone \"%V\"%Z",
+                &shm_zone->shm.name);
+
+    lock->shpool->log_nomem = 0;
+
+    return NGX_OK;
+}
+
+
 static void *
 ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf)
 {
@@ -864,6 +1116,12 @@ ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf)
     if (conf == NULL) {
         return NULL;
     }
+
+    /*
+     * set by ngx_pcalloc():
+     *
+     *     conf->shm_zone = NULL;
+     */
 
     return conf;
 }
@@ -878,6 +1136,166 @@ ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_bitmask_value(conf->methods, prev->methods,
                          (NGX_CONF_BITMASK_SET|NGX_HTTP_DAV_EXT_OFF));
 
+    if (conf->shm_zone == NULL) {
+        conf->shm_zone = prev->shm_zone;
+    }
+
+    return NGX_CONF_OK;
+}
+
+
+static char *
+ngx_http_dav_ext_lock_zone(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    u_char                   *p;
+    time_t                    timeout;
+    ssize_t                   size;
+    ngx_str_t                *value, name, s;
+    ngx_uint_t                i;
+    ngx_shm_zone_t           *shm_zone;
+    ngx_http_dav_ext_lock_t  *lock;
+
+    value = cf->args->elts;
+
+    name.len = 0;
+    size = 0;
+    timeout = 600;
+
+    for (i = 1; i < cf->args->nelts; i++) {
+
+        if (ngx_strncmp(value[i].data, "zone=", 5) == 0) {
+
+            name.data = value[i].data + 5;
+
+            p = (u_char *) ngx_strchr(name.data, ':');
+
+            if (p == NULL) {
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                   "invalid zone size \"%V\"", &value[i]);
+                return NGX_CONF_ERROR;
+            }
+
+            name.len = p - name.data;
+
+            s.data = p + 1;
+            s.len = value[i].data + value[i].len - s.data;
+
+            size = ngx_parse_size(&s);
+
+            if (size == NGX_ERROR) {
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                   "invalid zone size \"%V\"", &value[i]);
+                return NGX_CONF_ERROR;
+            }
+
+            if (size < (ssize_t) (8 * ngx_pagesize)) {
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                   "zone \"%V\" is too small", &value[i]);
+                return NGX_CONF_ERROR;
+            }
+
+            continue;
+        }
+
+        if (ngx_strncmp(value[i].data, "timeout=", 8) == 0) {
+
+            s.len = value[i].len - 8;
+            s.data = value[i].data + 8;
+
+            timeout = ngx_parse_time(&s, 1);
+            if (timeout == (time_t) NGX_ERROR || timeout == 0) {
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                   "invalid timeout value \"%V\"", &value[i]);
+                return NGX_CONF_ERROR;
+            }
+
+            continue;
+        }
+
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "invalid parameter \"%V\"", &value[i]);
+        return NGX_CONF_ERROR;
+    }
+
+    if (name.len == 0) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "\"%V\" must have \"zone\" parameter",
+                           &cmd->name);
+        return NGX_CONF_ERROR;
+    }
+
+    lock = ngx_pcalloc(cf->pool, sizeof(ngx_http_dav_ext_lock_t));
+    if (lock == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    lock->timeout = timeout;
+
+    shm_zone = ngx_shared_memory_add(cf, &name, size,
+                                     &ngx_http_dav_ext_module);
+    if (shm_zone == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    if (shm_zone->data) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "duplicate zone \"%V\"", &name);
+        return NGX_CONF_ERROR;
+    }
+
+    shm_zone->init = ngx_http_dav_ext_init_zone;
+    shm_zone->data = lock;
+
+    return NGX_CONF_OK;
+}
+
+
+static char *
+ngx_http_dav_ext_lock(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_dav_ext_loc_conf_t *dlcf = conf;
+
+    ngx_str_t       *value, s;
+    ngx_uint_t       i;
+    ngx_shm_zone_t  *shm_zone;
+
+    if (dlcf->shm_zone) {
+        return "is duplicate";
+    }
+
+    value = cf->args->elts;
+
+    shm_zone = NULL;
+
+    for (i = 1; i < cf->args->nelts; i++) {
+
+        if (ngx_strncmp(value[i].data, "zone=", 5) == 0) {
+
+            s.len = value[i].len - 5;
+            s.data = value[i].data + 5;
+
+            shm_zone = ngx_shared_memory_add(cf, &s, 0,
+                                             &ngx_http_dav_ext_module);
+            if (shm_zone == NULL) {
+                return NGX_CONF_ERROR;
+            }
+
+            continue;
+        }
+
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "invalid parameter \"%V\"", &value[i]);
+        return NGX_CONF_ERROR;
+    }
+
+    if (shm_zone == NULL) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "\"%V\" must have \"zone\" parameter", &cmd->name);
+        return NGX_CONF_ERROR;
+    }
+
+    dlcf->shm_zone = shm_zone;
+
     return NGX_CONF_OK;
 }
 
@@ -890,12 +1308,19 @@ ngx_http_dav_ext_init(ngx_conf_t *cf)
 
     cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
 
+    h = ngx_array_push(&cmcf->phases[NGX_HTTP_PRECONTENT_PHASE].handlers);
+    if (h == NULL) {
+        return NGX_ERROR;
+    }
+
+    *h = ngx_http_dav_ext_precontent_handler;
+
     h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
     if (h == NULL) {
         return NGX_ERROR;
     }
 
-    *h = ngx_http_dav_ext_handler;
+    *h = ngx_http_dav_ext_content_handler;
 
     return NGX_OK;
 }
