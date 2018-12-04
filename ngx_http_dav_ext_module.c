@@ -52,8 +52,16 @@ typedef struct {
 
 
 typedef struct {
-    ngx_rbtree_t                 rbtree;
-    ngx_rbtree_node_t            sentinel;
+    ngx_queue_t                  queue;
+    uint32_t                     token;
+    time_t                       expire;
+    size_t                       len;
+    ngx_uint_t                   infinite;
+    u_char                       data[1];
+} ngx_http_dav_ext_node_t;
+
+
+typedef struct {
     ngx_queue_t                  queue;
 } ngx_http_dav_ext_lock_sh_t;
 
@@ -66,8 +74,6 @@ typedef struct {
 
 
 static ngx_int_t ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r);
-static ngx_int_t ngx_http_dav_ext_verify_lock(ngx_http_request_t *r,
-    ngx_str_t *uri);
 static ngx_int_t ngx_http_dav_ext_content_handler(ngx_http_request_t *r);
 static void ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r);
 static void ngx_http_dav_ext_start_xml_elt(void *user_data,
@@ -76,14 +82,17 @@ static void ngx_http_dav_ext_end_xml_elt(void *user_data, const XML_Char *name);
 static int ngx_http_dav_ext_xmlcmp(const char *xname, const char *sname);
 static ngx_int_t ngx_http_dav_ext_propfind(ngx_http_request_t *r);
 static ngx_int_t ngx_http_dav_ext_depth(ngx_http_request_t *r);
+static uint32_t ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name);
 static ngx_int_t ngx_http_dav_ext_propfind_send_response(ngx_http_request_t *r,
     ngx_array_t *entries);
 static uintptr_t ngx_http_dav_ext_format_entry(ngx_http_request_t *r,
     u_char *dst, ngx_http_dav_ext_entry_t *entry);
-static void ngx_http_dav_ext_rbtree_insert_value(ngx_rbtree_node_t *temp,
-    ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel);
 static ngx_int_t ngx_http_dav_ext_init_zone(ngx_shm_zone_t *shm_zone,
     void *data);
+static ngx_int_t ngx_http_dav_ext_verify_lock(ngx_http_request_t *r,
+    ngx_str_t *uri);
+static ngx_int_t ngx_http_dav_ext_lock_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r);
 static void *ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent,
     void *child);
@@ -200,34 +209,7 @@ ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r)
         }
     }
 
-    /* XXX DELETE must remove lock if any */
-
     return NGX_DECLINED;
-}
-
-
-static ngx_int_t
-ngx_http_dav_ext_verify_lock(ngx_http_request_t *r, ngx_str_t *uri)
-{
-    ngx_http_dav_ext_lock_t      *lock;
-    ngx_http_dav_ext_loc_conf_t  *dlcf;
-
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "http dav_ext check lock \"%V\"", uri);
-
-    dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
-
-    lock = dlcf->shm_zone->data;
-
-    /* XXX search up */
-    /* XXX check timeout not expired */
-    /* XXX verify lock token */
-
-    if (0) {
-        return 423; /* Locked */
-    }
-
-    return NGX_OK;
 }
 
 
@@ -309,7 +291,7 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
         }
 
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "http dav_ext unlock");
+                       "http dav_ext lock");
 
         /*
          * Body is expected to have lock type, but since we
@@ -325,41 +307,7 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
             return rc;
         }
 
-        /*
-         * XXX
-         * - search up and down, verify timeouts
-         * - if conflict is found then return error
-         * - stat file, if missing then create an empty file
-         */
-
-        /* XXX use depth from input header, default is infinity */
-
-        /* XXX refresh locks if no body */
-
-#if 0
-        <?xml version="1.0" encoding="utf-8" ?>
-        <D:prop xmlns:D="DAV:">
-          <D:lockdiscovery>
-            <D:activelock>
-              <D:locktype><D:write/></D:locktype>
-              <D:lockscope><D:exclusive/></D:lockscope>
-              <D:depth>infinity</D:depth>
-              <D:owner></D:owner>
-              <D:timeout>Second-604800</D:timeout>
-              <D:locktoken>
-                <D:href>urn:deadbeef</D:href>
-              </D:locktoken>
-              <D:lockroot>
-                <D:href>/workspace/webdav/proposal.doc</D:href>
-              </D:lockroot>
-            </D:activelock>
-          </D:lockdiscovery>
-        </D:prop>
-
-        Also, put lock token in the Lock-Token output header
-#endif
-
-        return NGX_HTTP_NO_CONTENT;
+        return ngx_http_dav_ext_lock_handler(r);
 
     case NGX_HTTP_UNLOCK:
 
@@ -376,12 +324,7 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
             return rc;
         }
 
-        /*
-         * XXX
-         * - remove the lock if found, check Lock-Token header
-         */
-
-        return NGX_HTTP_NO_CONTENT;
+        return ngx_http_dav_ext_unlock_handler(r);
     }
 
     return NGX_DECLINED;
@@ -570,8 +513,24 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
     }
 
     rc = ngx_http_dav_ext_depth(r);
-    if (rc != 0 && rc != 1) {
-        return rc;
+
+    if (rc == NGX_ERROR) {
+        return NGX_HTTP_BAD_REQUEST;
+    }
+
+    if (rc == NGX_MAX_INT_T_VALUE) {
+
+        /*
+         * RFC4918 allows us to return 403 error in this case.
+         * However we do not return the precondition code.
+         *
+         * 403 Forbidden -  A server MAY reject PROPFIND requests on
+         * collections with depth header of "Infinity", in which case
+         * it SHOULD use this error with the precondition code
+         * 'propfind-finite-depth' inside the error body.
+         */
+
+        return NGX_HTTP_FORBIDDEN;
     }
 
     depth = rc;
@@ -794,14 +753,6 @@ ngx_http_dav_ext_depth(ngx_http_request_t *r)
 {
     ngx_table_elt_t  *depth;
 
-    /*
-     * We do not support infinity depth as allowed by RFC4918:
-     *
-     * In practice, support for infinite-depth requests
-     * MAY be disabled, due to the performance and security
-     * concerns associated with this behavior.
-     */
-
     depth = r->headers_in.depth;
 
     if (depth == NULL) {
@@ -823,17 +774,7 @@ ngx_http_dav_ext_depth(ngx_http_request_t *r)
         if (depth->value.len == sizeof("infinity") - 1
             && ngx_strcmp(depth->value.data, "infinity") == 0)
         {
-            /*
-             * RFC4918 allows us to return 403 error in this case.
-             * However we do not return the precondition code.
-             *
-             * 403 Forbidden -  A server MAY reject PROPFIND requests on
-             * collections with depth header of "Infinity", in which case
-             * it SHOULD use this error with the precondition code
-             * 'propfind-finite-depth' inside the error body.
-             */
-
-            return NGX_HTTP_FORBIDDEN;
+            return NGX_MAX_INT_T_VALUE;
         }
     }
 
@@ -841,7 +782,15 @@ ngx_http_dav_ext_depth(ngx_http_request_t *r)
                   "client sent invalid \"Depth\" header: \"%V\"",
                   &depth->value);
 
-    return NGX_HTTP_BAD_REQUEST;
+    return NGX_ERROR;
+}
+
+
+static uint32_t
+ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name)
+{
+    /* XXX */
+    return 0;
 }
 
 
@@ -1032,11 +981,13 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
         }
 
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY) {
+            /* XXX real data */
             dst = ngx_cpymem(dst, "<D:lockdiscovery/>\n",
                              sizeof("<D:lockdiscovery/>\n") - 1);
         }
 
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK) {
+            /* XXX real data */
             dst = ngx_cpymem(dst, "<D:supportedlock/>\n",
                              sizeof("<D:supportedlock/>\n") - 1);
         }
@@ -1045,14 +996,6 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
     dst = ngx_cpymem(dst, tail, sizeof(tail) - 1);
 
     return (uintptr_t) dst;
-}
-
-
-static void
-ngx_http_dav_ext_rbtree_insert_value(ngx_rbtree_node_t *temp,
-    ngx_rbtree_node_t *node, ngx_rbtree_node_t *sentinel)
-{
-    /* XXX */
 }
 
 
@@ -1086,9 +1029,6 @@ ngx_http_dav_ext_init_zone(ngx_shm_zone_t *shm_zone, void *data)
 
     lock->shpool->data = lock->sh;
 
-    ngx_rbtree_init(&lock->sh->rbtree, &lock->sh->sentinel,
-                    ngx_http_dav_ext_rbtree_insert_value);
-
     ngx_queue_init(&lock->sh->queue);
 
     len = sizeof(" in dav_ext zone \"\"") + shm_zone->shm.name.len;
@@ -1104,6 +1044,364 @@ ngx_http_dav_ext_init_zone(ngx_shm_zone_t *shm_zone, void *data)
     lock->shpool->log_nomem = 0;
 
     return NGX_OK;
+}
+
+
+static ngx_int_t
+ngx_http_dav_ext_verify_lock(ngx_http_request_t *r, ngx_str_t *uri)
+{
+    u_char                       *data;
+    size_t                        len;
+    time_t                        now;
+    uint32_t                      token;
+    ngx_queue_t                  *q;
+    ngx_http_dav_ext_node_t      *node;
+    ngx_http_dav_ext_lock_t      *lock;
+    ngx_http_dav_ext_loc_conf_t  *dlcf;
+
+    static ngx_str_t token_field = ngx_string("if");
+
+    token = ngx_http_dav_ext_token(r, &token_field);
+
+    dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
+
+    lock = dlcf->shm_zone->data;
+
+    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "http dav_ext verify lock \"%V\", token:%uxD", uri, token);
+
+    now = ngx_time();
+
+    if (uri->len == 0) {
+        return NGX_HTTP_BAD_REQUEST;
+    }
+
+    data = uri->data;
+    len = uri->len;
+
+    if (data[len - 1] == '/') {
+        len--;
+    }
+
+    ngx_shmtx_lock(&lock->shpool->mutex);
+
+    while (!ngx_queue_empty(&lock->sh->queue)) {
+        q = ngx_queue_head(&lock->sh->queue);
+        node = (ngx_http_dav_ext_node_t *) q;
+
+        if (node->expire >= now) {
+            break;
+        }
+
+        ngx_queue_remove(q);
+        ngx_slab_free_locked(lock->shpool, node);
+    }
+
+    for (q = ngx_queue_head(&lock->sh->queue);
+         q != ngx_queue_sentinel(&lock->sh->queue);
+         q = ngx_queue_next(q))
+    {
+        node = (ngx_http_dav_ext_node_t *) q;
+
+        if (len < node->len) {
+            continue;
+        }
+
+        if (ngx_memcmp(data, node->data, node->len)) {
+            continue;
+        }
+
+        if (len > node->len) {
+            if (data[node->len] != '/') {
+                continue;
+            }
+
+            if (!node->infinite
+                && ngx_strlchr(data + node->len + 1, data + len, '/'))
+            {
+                continue;
+            }
+        }
+
+        goto found;
+    }
+
+    ngx_shmtx_unlock(&lock->shpool->mutex);
+
+    return NGX_OK;
+
+found:
+
+    if (token == 0) {
+        ngx_shmtx_unlock(&lock->shpool->mutex);
+        /* XXX body? */
+        return 423; /* Locked */
+    }
+
+    if (token != node->token) {
+        ngx_shmtx_unlock(&lock->shpool->mutex);
+        return NGX_HTTP_PRECONDITION_FAILED;
+    }
+
+    if (r->method == NGX_HTTP_DELETE && node->len == len) {
+        ngx_queue_remove(q);
+        ngx_slab_free_locked(lock->shpool, node);
+    }
+
+    ngx_shmtx_unlock(&lock->shpool->mutex);
+
+    return NGX_OK;
+}
+
+
+static ngx_int_t
+ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
+{
+    u_char                       *data;
+    size_t                        len, n;
+    time_t                        now;
+    uint32_t                      token;
+    ngx_int_t                     rc, depth;
+    ngx_queue_t                  *q;
+    ngx_http_dav_ext_lock_t      *lock;
+    ngx_http_dav_ext_node_t      *node;
+    ngx_http_dav_ext_loc_conf_t  *dlcf;
+
+    static ngx_str_t token_field = ngx_string("if");
+
+    token = ngx_http_dav_ext_token(r, &token_field);
+
+    while (token == 0) {
+        token = ngx_random();
+    }
+
+    dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
+
+    lock = dlcf->shm_zone->data;
+
+    now = ngx_time();
+
+    rc = ngx_http_dav_ext_depth(r);
+
+    if (rc == NGX_ERROR || rc == 1) {
+        return NGX_HTTP_BAD_REQUEST;
+    }
+
+    depth = rc;
+
+    if (r->uri.len == 0) {
+        return NGX_ERROR;
+    }
+
+    data = r->uri.data;
+    len = r->uri.len;
+
+    if (data[len - 1] == '/') {
+        len--;
+    }
+
+    ngx_shmtx_lock(&lock->shpool->mutex);
+
+    while (!ngx_queue_empty(&lock->sh->queue)) {
+        q = ngx_queue_head(&lock->sh->queue);
+        node = (ngx_http_dav_ext_node_t *) q;
+
+        if (node->expire >= now) {
+            break;
+        }
+
+        ngx_queue_remove(q);
+        ngx_slab_free_locked(lock->shpool, node);
+    }
+
+    for (q = ngx_queue_head(&lock->sh->queue);
+         q != ngx_queue_sentinel(&lock->sh->queue);
+         q = ngx_queue_next(q))
+    {
+        node = (ngx_http_dav_ext_node_t *) q;
+
+        if (len >= node->len) {
+            if (ngx_memcmp(data, node->data, node->len)) {
+                continue;
+            }
+
+            if (len > node->len) {
+                if (data[node->len] != '/') {
+                    continue;
+                }
+
+                if (!node->infinite
+                    && ngx_strlchr(data + node->len + 1, data + len, '/'))
+                {
+                    continue;
+                }
+            }
+
+        } else {
+            if (ngx_memcmp(node->data, data, len)) {
+                continue;
+            }
+
+            if (node->data[len] != '/') {
+                continue;
+            }
+
+            if (depth == 0
+                && ngx_strlchr(node->data + len + 1, node->data + node->len,
+                               '/'))
+            {
+                continue;
+            }
+        }
+
+        goto found;
+    }
+
+    n = sizeof(ngx_http_dav_ext_node_t) + len - (len ? 1 : 0);
+
+    node = ngx_slab_alloc_locked(lock->shpool, n);
+    if (node == NULL) {
+        ngx_shmtx_unlock(&lock->shpool->mutex);
+        return NGX_ERROR;
+    }
+
+    ngx_memzero(node, sizeof(ngx_http_dav_ext_node_t));
+
+    ngx_memcpy(&node->data, data, len);
+
+    node->token = token;
+    node->expire = now + lock->timeout;
+    node->infinite = (depth ? 1 : 0);
+
+    ngx_queue_insert_tail(&lock->sh->queue, &node->queue);
+
+    ngx_shmtx_unlock(&lock->shpool->mutex);
+
+    /* XXX create empty file if missing */
+
+    goto response;
+
+found:
+
+    if (node->token != token) {
+        ngx_shmtx_unlock(&lock->shpool->mutex);
+        return 423; /* Locked */
+    }
+
+    /* refresh */
+
+    node->expire = now + lock->timeout;
+
+    ngx_queue_remove(q);
+    ngx_queue_insert_tail(&lock->sh->queue, &node->queue);
+
+    ngx_shmtx_unlock(&lock->shpool->mutex);
+
+response:
+
+#if 0
+
+    <?xml version="1.0" encoding="utf-8" ?>
+    <D:prop xmlns:D="DAV:">
+      <D:lockdiscovery>
+        <D:activelock>
+          <D:locktype><D:write/></D:locktype>
+          <D:lockscope><D:exclusive/></D:lockscope>
+          <D:depth>infinity</D:depth>
+          <D:owner></D:owner>
+          <D:timeout>Second-604800</D:timeout>
+          <D:locktoken>
+            <D:href>urn:deadbeef</D:href>
+          </D:locktoken>
+          <D:lockroot>
+            <D:href>/workspace/webdav/proposal.doc</D:href>
+          </D:lockroot>
+        </D:activelock>
+      </D:lockdiscovery>
+    </D:prop>
+
+    /* Also, put lock token in the Lock-Token output header */ 
+
+#endif
+
+    /* XXX output */
+
+    return NGX_HTTP_NO_CONTENT;
+}
+
+
+static ngx_int_t
+ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
+{
+    time_t                        now;
+    size_t                        len;
+    u_char                       *data;
+    uint32_t                      token;
+    ngx_queue_t                  *q;
+    ngx_http_dav_ext_lock_t      *lock;
+    ngx_http_dav_ext_node_t      *node;
+    ngx_http_dav_ext_loc_conf_t  *dlcf;
+
+    static ngx_str_t token_field = ngx_string("lock-token");
+
+    token = ngx_http_dav_ext_token(r, &token_field);
+
+    dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
+
+    lock = dlcf->shm_zone->data;
+
+    now = ngx_time();
+
+    if (r->uri.len == 0) {
+        return NGX_HTTP_BAD_REQUEST;
+    }
+
+    data = r->uri.data;
+    len = r->uri.len;
+
+    if (data[len - 1] == '/') {
+        len--;
+    }
+
+    ngx_shmtx_lock(&lock->shpool->mutex);
+
+    while (!ngx_queue_empty(&lock->sh->queue)) {
+        q = ngx_queue_head(&lock->sh->queue);
+        node = (ngx_http_dav_ext_node_t *) q;
+
+        if (node->expire >= now) {
+            break;
+        }
+
+        ngx_queue_remove(q);
+        ngx_slab_free_locked(lock->shpool, node);
+    }
+
+    for (q = ngx_queue_head(&lock->sh->queue);
+         q != ngx_queue_sentinel(&lock->sh->queue);
+         q = ngx_queue_next(q))
+    {
+        node = (ngx_http_dav_ext_node_t *) q;
+
+        if (node->len == len && ngx_memcmp(node->data, data, len) == 0) {
+            goto found;
+        }
+    }
+
+    ngx_shmtx_unlock(&lock->shpool->mutex);
+
+    return NGX_HTTP_NO_CONTENT;
+
+found:
+
+    if (token == node->token) {
+        ngx_queue_remove(q);
+        ngx_slab_free_locked(lock->shpool, node);
+    }
+
+    ngx_shmtx_unlock(&lock->shpool->mutex);
+
+    return NGX_HTTP_NO_CONTENT;
 }
 
 
