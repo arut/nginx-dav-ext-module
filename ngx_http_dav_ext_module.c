@@ -789,7 +789,76 @@ ngx_http_dav_ext_depth(ngx_http_request_t *r)
 static uint32_t
 ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name)
 {
-    /* XXX */
+    u_char            ch;
+    uint32_t          token;
+    ngx_uint_t        i, n;
+    ngx_list_part_t  *part;
+    ngx_table_elt_t  *header;
+
+    part = &r->headers_in.headers.part;
+
+    header = part->elts;
+
+    for (i = 0; /* void */ ; i++) {
+
+        if (i >= part->nelts) {
+            if (part->next == NULL) {
+                break;
+            }
+
+            part = part->next;
+            header = part->elts;
+            i = 0;
+        }
+
+        if (header[i].hash == 0) {
+            continue;
+        }
+
+        for (n = 0; n < name->len && n < header[i].key.len; n++) {
+            ch = header[i].key.data[n];
+
+            if (ch >= 'A' && ch <= 'Z') {
+                ch |= 0x20;
+
+            } else if (ch == '-') {
+                ch = '_';
+            }
+
+            if (name->data[n] != ch) {
+                break;
+            }
+        }
+
+        if (n == name->len && n == header[i].key.len) {
+            if (header[i].value.len != sizeof("<urn:deadbeef>") - 1) {
+                return 0;
+            }
+
+            token = 0;
+
+            for (n = 0; n < 8; n++) {
+                ch = header[i].value.data[5 + n];
+
+                if (ch >= '0' && ch <= '9') {
+                    token = token * 16 + (ch - '0');
+                    continue;
+                }
+
+                ch = (u_char) (ch | 0x20);
+
+                if (ch >= 'a' && ch <= 'f') {
+                    token = token * 16 + (ch - 'a' + 10);
+                    continue;
+                }
+
+                return 0;
+            }
+
+            return token;
+        }
+    }
+
     return 0;
 }
 
