@@ -33,9 +33,16 @@
 typedef struct {
     ngx_str_t                    uri;
     ngx_str_t                    name;
-    ngx_uint_t                   dir;  /* unsigned  dir:1; */
+    ngx_str_t                    lock_root;
+
     time_t                       mtime;
+    time_t                       lock_timeout;
+
     off_t                        size;
+    uint32_t                     lock_token;
+
+    ngx_uint_t                   dir;  /* unsigned  dir:1 */
+    ngx_uint_t                   lock_depth;
 } ngx_http_dav_ext_entry_t;
 
 
@@ -85,7 +92,9 @@ static ngx_int_t ngx_http_dav_ext_depth(ngx_http_request_t *r);
 static uint32_t ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name);
 static ngx_int_t ngx_http_dav_ext_propfind_send_response(ngx_http_request_t *r,
     ngx_array_t *entries);
-static uintptr_t ngx_http_dav_ext_format_entry(ngx_http_request_t *r,
+static uintptr_t ngx_http_dav_ext_format_response(ngx_http_request_t *r,
+    u_char *dst, ngx_http_dav_ext_entry_t *entry);
+static uintptr_t ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r,
     u_char *dst, ngx_http_dav_ext_entry_t *entry);
 static ngx_int_t ngx_http_dav_ext_init_zone(ngx_shm_zone_t *shm_zone,
     void *data);
@@ -93,6 +102,8 @@ static ngx_int_t ngx_http_dav_ext_verify_lock(ngx_http_request_t *r,
     ngx_str_t *uri);
 static ngx_int_t ngx_http_dav_ext_lock_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_dav_ext_lock_response(ngx_http_request_t *r,
+    time_t timeout, ngx_uint_t depth, uint32_t token);
 static void *ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent,
     void *child);
@@ -886,7 +897,7 @@ ngx_http_dav_ext_propfind_send_response(ngx_http_request_t *r,
     entry = entries->elts;
 
     for (n = 0; n < entries->nelts; n++) {
-        len += ngx_http_dav_ext_format_entry(r, NULL, &entry[n]);
+        len += ngx_http_dav_ext_format_response(r, NULL, &entry[n]);
     }
 
     b = ngx_create_temp_buf(r->pool, len);
@@ -897,8 +908,8 @@ ngx_http_dav_ext_propfind_send_response(ngx_http_request_t *r,
     b->last = ngx_cpymem(b->last, head, sizeof(head) - 1);
 
     for (n = 0; n < entries->nelts; n++) {
-        b->last = (u_char *) ngx_http_dav_ext_format_entry(r, b->last,
-                                                           &entry[n]);
+        b->last = (u_char *) ngx_http_dav_ext_format_response(r, b->last,
+                                                              &entry[n]);
     }
 
     b->last = ngx_cpymem(b->last, tail, sizeof(tail) - 1);
@@ -931,7 +942,7 @@ ngx_http_dav_ext_propfind_send_response(ngx_http_request_t *r,
 
 
 static uintptr_t
-ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
+ngx_http_dav_ext_format_response(ngx_http_request_t *r, u_char *dst,
     ngx_http_dav_ext_entry_t *entry)
 {
     size_t                   len;
@@ -992,7 +1003,6 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
                           "<D:collection/>"
                           "</D:resourcetype>\n"
 
-                          "<D:lockdiscovery/>\n"
                           "<D:supportedlock/>\n") - 1;
 
             /* displayname */
@@ -1001,6 +1011,8 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
 
             /* getcontentlength */
             len += NGX_OFF_T_LEN;
+
+            len += ngx_http_dav_ext_format_lockdiscovery(r, NULL, entry);
         }
 
         return len;
@@ -1050,9 +1062,8 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
         }
 
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY) {
-            /* XXX real data */
-            dst = ngx_cpymem(dst, "<D:lockdiscovery/>\n",
-                             sizeof("<D:lockdiscovery/>\n") - 1);
+            dst = (u_char *) ngx_http_dav_ext_format_lockdiscovery(r, dst,
+                                                                   entry);
         }
 
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK) {
@@ -1063,6 +1074,92 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
     }
 
     dst = ngx_cpymem(dst, tail, sizeof(tail) - 1);
+
+    return (uintptr_t) dst;
+}
+
+
+static uintptr_t
+ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r, u_char *dst,
+    ngx_http_dav_ext_entry_t *entry)
+{
+    size_t  len;
+
+    if (dst == NULL) {
+        if (entry->lock_root.len == 0) {
+            return sizeof("<D:lockdiscovery/>\n") - 1;
+        }
+
+        len = sizeof("<D:lockdiscovery>\n"
+                     "<D:activelock>\n"
+                     "<D:locktype><D:write/></D:locktype>\n"
+                     "<D:lockscope><D:exclusive/></D:lockscope>\n"
+                     "<D:owner></D:owner>\n"
+                     "<D:depth>infinity</D:depth>\n"
+                     "<D:timeout>Second-</D:timeout>\n"
+                     "<D:locktoken><D:href><urn:deadbeef>"
+                                                    "</D:href></D:locktoken>\n"
+                     "<D:lockroot><D:href></D:href></D:lockroot>\n"
+                     "</D:activelock>\n"
+                     "</D:lockdiscovery>\n") - 1;
+
+        /* timeout */
+        len += NGX_TIME_T_LEN;
+
+        /* lockroot */
+        len += entry->lock_root.len + ngx_escape_html(NULL,
+                                                      entry->lock_root.data,
+                                                      entry->lock_root.len);
+        return len;
+    }
+
+    if (entry->lock_root.len == 0) {
+        dst = ngx_cpymem(dst, "<D:lockdiscovery/>\n",
+                         sizeof("<D:lockdiscovery/>\n") - 1);
+        return (uintptr_t) dst;
+    }
+
+    dst = ngx_cpymem(dst, "<D:lockdiscovery>\n",
+                     sizeof("<D:lockdiscovery>\n") - 1);
+
+    dst = ngx_cpymem(dst, "<D:activelock>\n",
+                     sizeof("<D:activelock>\n") - 1);
+
+    dst = ngx_cpymem(dst, "<D:locktype><D:write/></D:locktype>\n",
+                     sizeof("<D:locktype><D:write/></D:locktype>\n") - 1);
+
+    dst = ngx_cpymem(dst, "<D:lockscope><D:exclusive/></D:lockscope>\n",
+                     sizeof("<D:lockscope><D:exclusive/></D:lockscope>\n") - 1);
+
+    dst = ngx_cpymem(dst, "<D:owner></D:owner>\n",
+                     sizeof("<D:owner></D:owner>\n") - 1);
+
+    dst = ngx_cpymem(dst, "<D:depth>", sizeof("<D:depth>") - 1);
+
+    if (entry->lock_depth == 0) {
+        *dst++ = '0';
+    } else {
+        dst = ngx_cpymem(dst, "infinity", sizeof("infinity") - 1);
+    }
+
+    dst = ngx_cpymem(dst, "<D:timeout>Second-%O</D:timeout>\n",
+                     entry->lock_timeout);
+
+    dst = ngx_cpymem(dst, "<D:locktoken><D:href><urn:",
+                     sizeof("<D:locktoken><D:href><urn:") - 1);
+    dst = ngx_hex_dump(dst, (u_char *) &entry->lock_token, 4);
+    dst = ngx_cpymem(dst, "</D:href></D:locktoken>\n",
+                     sizeof("</D:href></D:locktoken>\n") - 1);
+
+    dst = ngx_cpymem(dst, "<D:lockroot><D:href>",
+                     sizeof("<D:lockroot><D:href>") - 1);
+    dst = (u_char *) ngx_escape_html(dst, entry->lock_root.data,
+                                     entry->lock_root.len);
+    dst = ngx_cpymem(dst, "</D:href></D:lockroot>\n",
+                     sizeof("</D:href></D:lockroot>\n") - 1);
+
+    dst = ngx_cpymem(dst, "</D:activelock>\n</D:lockdiscovery>\n",
+                     sizeof("</D:activelock>\n</D:lockdiscovery>\n") - 1);
 
     return (uintptr_t) dst;
 }
@@ -1348,7 +1445,7 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
 
     /* XXX create empty file if missing */
 
-    goto response;
+    return ngx_http_dav_ext_lock_response(r, lock->timeout, depth, token);
 
 found:
 
@@ -1366,36 +1463,95 @@ found:
 
     ngx_shmtx_unlock(&lock->shpool->mutex);
 
-response:
+    return ngx_http_dav_ext_lock_response(r, lock->timeout, depth, token);
+}
 
-#if 0
 
-    <?xml version="1.0" encoding="utf-8" ?>
-    <D:prop xmlns:D="DAV:">
-      <D:lockdiscovery>
-        <D:activelock>
-          <D:locktype><D:write/></D:locktype>
-          <D:lockscope><D:exclusive/></D:lockscope>
-          <D:depth>infinity</D:depth>
-          <D:owner></D:owner>
-          <D:timeout>Second-604800</D:timeout>
-          <D:locktoken>
-            <D:href>urn:deadbeef</D:href>
-          </D:locktoken>
-          <D:lockroot>
-            <D:href>/workspace/webdav/proposal.doc</D:href>
-          </D:lockroot>
-        </D:activelock>
-      </D:lockdiscovery>
-    </D:prop>
+static ngx_int_t
+ngx_http_dav_ext_lock_response(ngx_http_request_t *r, time_t timeout,
+    ngx_uint_t depth, uint32_t token)
+{
+    size_t                     len;
+    u_char                    *p;
+    ngx_int_t                  rc;
+    ngx_buf_t                 *b;
+    ngx_chain_t                cl;
+    ngx_table_elt_t           *h;
+    ngx_http_dav_ext_entry_t   entry;
 
-    /* Also, put lock token in the Lock-Token output header */ 
+    ngx_memzero(&entry, sizeof(ngx_http_dav_ext_entry_t));
 
-#endif
+    entry.lock_timeout = timeout;
+    entry.lock_root = r->uri;
+    entry.lock_depth = depth;
+    entry.lock_token = token;
 
-    /* XXX output */
+    len = sizeof("<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
+                 "<D:prop xmlns:D=\"DAV:\">\n"
+                 "</D:prop>") - 1;
 
-    return NGX_HTTP_NO_CONTENT;
+    len += ngx_http_dav_ext_format_lockdiscovery(r, NULL, &entry);
+
+    b = ngx_create_temp_buf(r->pool, len);
+    if (b == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    b->last = ngx_cpymem(b->last,
+                  "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n",
+                  sizeof("<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n") - 1);
+
+    b->last = ngx_cpymem(b->last, "<D:prop xmlns:D=\"DAV:\">\n",
+                         sizeof("<D:prop xmlns:D=\"DAV:\">\n") - 1);
+
+    b->last = (u_char *) ngx_http_dav_ext_format_lockdiscovery(r, b->last,
+                                                               &entry);
+
+    b->last = ngx_cpymem(b->last, "</D:prop>", sizeof("</D:prop>") - 1);
+
+    b->last_buf = (r == r->main) ? 1 : 0;
+    b->last_in_chain = 1;
+
+    cl.buf = b;
+    cl.next = NULL;
+
+    r->headers_out.status = NGX_HTTP_OK;
+
+    r->headers_out.content_length_n = b->last - b->pos;
+
+    r->headers_out.content_type_len = sizeof("text/xml") - 1;
+    ngx_str_set(&r->headers_out.content_type, "text/xml");
+    r->headers_out.content_type_lowcase = NULL;
+
+    ngx_str_set(&r->headers_out.charset, "utf-8");
+
+    p = ngx_pnalloc(r->pool, sizeof("<urn:deadbeef>") - 1);
+    if (p == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    h = ngx_list_push(&r->headers_out.headers);
+    if (h == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    ngx_str_set(&h->key, "Lock-Token");
+    h->value.data = p;
+
+    p = ngx_cpymem(p, "<urn:", 5);
+    p = ngx_hex_dump(p, (u_char *) &token, 4);
+    *p++ = '>';
+
+    h->value.len = p - h->value.data;
+    h->hash = 1;
+
+    rc = ngx_http_send_header(r);
+
+    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
+        return rc;
+    }
+
+    return ngx_http_output_filter(r, &cl);
 }
 
 
