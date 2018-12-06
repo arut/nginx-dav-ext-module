@@ -84,7 +84,7 @@ The module tests require standard nginx-tests_ and Perl HTTP::DAV library.
 Example 1
 =========
 
-.. code-block::
+Simple lockless example::
 
     location / {
         root /data/www;
@@ -97,7 +97,7 @@ Example 1
 Example 2
 =========
 
-.. code-block::
+WebDAV with locking::
 
     http {
         dav_ext_lock_zone zone=foo:10m;
@@ -109,6 +109,36 @@ Example 2
 
             location / {
                 root /data/www;
+
+                dav_methods PUT DELETE MKCOL COPY MOVE;
+                dav_ext_methods PROPFIND OPTIONS LOCK UNLOCK;
+                dav_ext_lock zone=foo;
+            }
+        }
+    }
+
+
+Example 3
+=========
+
+WebDAV with locking which works with MacOS client::
+
+    http {
+        dav_ext_lock_zone zone=foo:10m;
+
+        ...
+
+        server {
+            ...
+
+            location / {
+                root /data/www;
+
+                # enable creating directories without trailing slash
+                set $x $uri$request_method;
+                if ($x ~ [^/]MKCOL$) {
+                    rewrite ^(.*)$ $1/;
+                }
 
                 dav_methods PUT DELETE MKCOL COPY MOVE;
                 dav_ext_methods PROPFIND OPTIONS LOCK UNLOCK;
