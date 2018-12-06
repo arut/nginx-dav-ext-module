@@ -186,6 +186,8 @@ ngx_module_t  ngx_http_dav_ext_module = {
 static ngx_int_t
 ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r)
 {
+    size_t                        len;
+    u_char                       *p, *last, *host;
     ngx_str_t                     uri;
     ngx_int_t                     rc;
     ngx_table_elt_t              *dest;
@@ -211,9 +213,60 @@ ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r)
             return NGX_DECLINED;
         }
 
-        uri = dest->value;
+        p = dest->value.data;
 
-        /* XXX strip prefix */
+        if (p[0] == '/') {
+            last = p + dest->value.len;
+            goto destination_done;
+        }
+
+        len = r->headers_in.server.len;
+
+        if (len == 0) {
+            return NGX_DECLINED;
+        }
+
+#if (NGX_HTTP_SSL)
+
+        if (r->connection->ssl) {
+            if (ngx_strncmp(dest->value.data, "https://", sizeof("https://") - 1)
+                != 0)
+            {
+                return NGX_DECLINED;
+            }
+
+            host = dest->value.data + sizeof("https://") - 1;
+
+        } else
+#endif
+        {
+            if (ngx_strncmp(dest->value.data, "http://", sizeof("http://") - 1)
+                != 0)
+            {
+                return NGX_DECLINED;
+            }
+
+            host = dest->value.data + sizeof("http://") - 1;
+        }
+
+        if (ngx_strncmp(host, r->headers_in.server.data, len) != 0) {
+            return NGX_DECLINED;
+        }
+
+        last = dest->value.data + dest->value.len;
+
+        for (p = host + len; p < last; p++) {
+            if (*p == '/') {
+                goto destination_done;
+            }
+        }
+
+        return NGX_DECLINED;
+
+destination_done:
+
+        uri.data = p;
+        uri.len = last - p;
 
         rc = ngx_http_dav_ext_verify_lock(r, &uri);
         if (rc != NGX_OK) {
