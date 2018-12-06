@@ -1245,8 +1245,8 @@ ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r, u_char *dst,
         dst = ngx_cpymem(dst, "infinity", sizeof("infinity") - 1);
     }
 
-    dst = ngx_cpymem(dst, "<D:timeout>Second-%O</D:timeout>\n",
-                     entry->lock_timeout);
+    dst = ngx_sprintf(dst, "<D:timeout>Second-%O</D:timeout>\n",
+                      entry->lock_timeout);
 
     dst = ngx_cpymem(dst, "<D:locktoken><D:href>",
                      sizeof("<D:locktoken><D:href>") - 1);
