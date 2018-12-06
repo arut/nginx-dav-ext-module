@@ -813,8 +813,10 @@ ngx_http_dav_ext_format_entry(ngx_http_request_t *r, u_char *dst,
         }
 
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_GETCONTENTLENGTH) {
-            dst = ngx_sprintf(dst, "<D:getcontentlength>%O"
-                                   "</D:getcontentlength>\n", entry->size);
+            if (!entry->dir) {
+                dst = ngx_sprintf(dst, "<D:getcontentlength>%O"
+                                       "</D:getcontentlength>\n", entry->size);
+            }
         }
 
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_GETLASTMODIFIED) {
