@@ -1816,7 +1816,7 @@ ngx_http_dav_ext_lock_zone(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     name.len = 0;
     size = 0;
-    timeout = 600;
+    timeout = 60;
 
     for (i = 1; i < cf->args->nelts; i++) {
 
