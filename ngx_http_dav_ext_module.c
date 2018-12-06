@@ -337,7 +337,7 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
         /* XXX */
         ngx_str_set(&h->key, "Allow");
         ngx_str_set(&h->value,
-                    "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,PROPFIND,OPTIONS");
+           "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,PROPFIND,OPTIONS,LOCK,UNLOCK");
         h->hash = 1;
 
         r->headers_out.status = NGX_HTTP_OK;
