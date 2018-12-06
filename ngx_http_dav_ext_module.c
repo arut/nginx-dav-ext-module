@@ -41,7 +41,8 @@ typedef struct {
     off_t                        size;
     uint32_t                     lock_token;
 
-    ngx_uint_t                   dir;  /* unsigned  dir:1 */
+    unsigned                     dir:1;
+    unsigned                     lock_supported:1;
     ngx_uint_t                   lock_depth;
 } ngx_http_dav_ext_entry_t;
 
@@ -675,6 +676,8 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
 
     ngx_memzero(entry, sizeof(ngx_http_dav_ext_entry_t));
 
+    /* XXX fill lock-related fields */
+
     entry->uri = uri;
     entry->name = name;
     entry->dir = ngx_is_dir(&fi);
@@ -1054,6 +1057,13 @@ ngx_http_dav_ext_format_response(ngx_http_request_t *r, u_char *dst,
         "<D:lockdiscovery/>\n"
         "<D:supportedlock/>\n";
 
+
+    static u_char supportedlock[] =
+        "<D:lockentry>\n"
+        "<D:lockscope><D:exclusive/></D:lockscope>\n"
+        "<D:locktype><D:write/></D:locktype>\n"
+        "</D:lockentry>\n";
+
     ctx = ngx_http_get_module_ctx(r, ngx_http_dav_ext_module);
 
     if (dst == NULL) {
@@ -1082,7 +1092,8 @@ ngx_http_dav_ext_format_response(ngx_http_request_t *r, u_char *dst,
                           "<D:collection/>"
                           "</D:resourcetype>\n"
 
-                          "<D:supportedlock/>\n") - 1;
+                          "<D:supportedlock>\n"
+                          "</D:supportedlock>\n") - 1;
 
             /* displayname */
             len += entry->name.len
@@ -1092,6 +1103,11 @@ ngx_http_dav_ext_format_response(ngx_http_request_t *r, u_char *dst,
             len += NGX_OFF_T_LEN;
 
             len += ngx_http_dav_ext_format_lockdiscovery(r, NULL, entry);
+
+            /* supportedlock */
+            if (entry->lock_supported) {
+                len += sizeof(supportedlock) - 1;
+            }
         }
 
         return len;
@@ -1146,9 +1162,15 @@ ngx_http_dav_ext_format_response(ngx_http_request_t *r, u_char *dst,
         }
 
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK) {
-            /* XXX real data */
-            dst = ngx_cpymem(dst, "<D:supportedlock/>\n",
-                             sizeof("<D:supportedlock/>\n") - 1);
+            dst = ngx_cpymem(dst, "<D:supportedlock>\n",
+                             sizeof("<D:supportedlock>\n") - 1);
+
+            if (entry->lock_supported) {
+                dst = ngx_cpymem(dst, supportedlock, sizeof(supportedlock) - 1);
+            }
+
+            dst = ngx_cpymem(dst, "</D:supportedlock>\n",
+                             sizeof("</D:supportedlock>\n") - 1);
         }
     }
 
