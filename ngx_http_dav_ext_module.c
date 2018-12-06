@@ -860,6 +860,7 @@ ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name)
 {
     u_char            ch;
     uint32_t          token;
+    ngx_str_t         value;
     ngx_uint_t        i, n;
     ngx_list_part_t  *part;
     ngx_table_elt_t  *header;
@@ -897,14 +898,24 @@ ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name)
         }
 
         if (n == name->len && n == header[i].key.len) {
-            if (header[i].value.len != sizeof("<urn:deadbeef>") - 1) {
+            value = header[i].value;
+
+            if (value.len
+                && value.data[0] == '('
+                && value.data[value.len - 1] == ')')
+            {
+                value.data++;
+                value.len -= 2;
+            }
+
+            if (value.len != sizeof("<urn:deadbeef>") - 1) {
                 return 0;
             }
 
             token = 0;
 
             for (n = 0; n < 8; n++) {
-                ch = header[i].value.data[5 + n];
+                ch = value.data[5 + n];
 
                 if (ch >= '0' && ch <= '9') {
                     token = token * 16 + (ch - '0');
