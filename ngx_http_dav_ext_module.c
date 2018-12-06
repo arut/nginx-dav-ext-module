@@ -105,7 +105,7 @@ static ngx_int_t ngx_http_dav_ext_verify_lock(ngx_http_request_t *r,
 static ngx_int_t ngx_http_dav_ext_lock_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_dav_ext_lock_response(ngx_http_request_t *r,
-    time_t timeout, ngx_uint_t depth, uint32_t token);
+    ngx_uint_t status, time_t timeout, ngx_uint_t depth, uint32_t token);
 static void *ngx_http_dav_ext_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_dav_ext_merge_loc_conf(ngx_conf_t *cf, void *parent,
     void *child);
@@ -1426,12 +1426,16 @@ found:
 static ngx_int_t
 ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
 {
-    u_char                       *data;
-    size_t                        len, n;
+    u_char                       *data, *last;
+    size_t                        len, n, root;
     time_t                        now;
     uint32_t                      token;
+    ngx_fd_t                      fd;
     ngx_int_t                     rc, depth;
+    ngx_str_t                     path;
+    ngx_uint_t                    status;
     ngx_queue_t                  *q;
+    ngx_file_info_t               fi;
     ngx_http_dav_ext_lock_t      *lock;
     ngx_http_dav_ext_node_t      *node;
     ngx_http_dav_ext_loc_conf_t  *dlcf;
@@ -1546,9 +1550,39 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
 
     ngx_shmtx_unlock(&lock->shpool->mutex);
 
-    /* XXX create empty file if missing */
+    last = ngx_http_map_uri_to_path(r, &path, &root, 0);
+    if (last == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
 
-    return ngx_http_dav_ext_lock_response(r, lock->timeout, depth, token);
+    *last = '\0';
+
+    status = NGX_HTTP_OK;
+
+    if (ngx_file_info(path.data, &fi) == NGX_FILE_ERROR) {
+        fd = ngx_open_file(path.data, NGX_FILE_RDONLY, NGX_FILE_CREATE_OR_OPEN,
+                           NGX_FILE_DEFAULT_ACCESS);
+
+        if (fd == NGX_INVALID_FILE) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, ngx_errno,
+                          ngx_open_file_n " \"%s\" failed", path.data);
+            return NGX_HTTP_CONFLICT;
+        }
+
+        if (ngx_close_file(fd) == NGX_FILE_ERROR) {
+            ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno,
+                          ngx_close_file_n " \"%s\" failed", path.data);
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        status = NGX_HTTP_CREATED;
+
+    } else if (ngx_is_dir(&fi)) {
+        return NGX_HTTP_CONFLICT;
+    }
+
+    return ngx_http_dav_ext_lock_response(r, status, lock->timeout, depth,
+                                          token);
 
 found:
 
@@ -1566,13 +1600,14 @@ found:
 
     ngx_shmtx_unlock(&lock->shpool->mutex);
 
-    return ngx_http_dav_ext_lock_response(r, lock->timeout, depth, token);
+    return ngx_http_dav_ext_lock_response(r, NGX_HTTP_OK, lock->timeout,
+                                          depth, token);
 }
 
 
 static ngx_int_t
-ngx_http_dav_ext_lock_response(ngx_http_request_t *r, time_t timeout,
-    ngx_uint_t depth, uint32_t token)
+ngx_http_dav_ext_lock_response(ngx_http_request_t *r, ngx_uint_t status,
+    time_t timeout, ngx_uint_t depth, uint32_t token)
 {
     size_t                     len;
     u_char                    *p;
@@ -1618,7 +1653,7 @@ ngx_http_dav_ext_lock_response(ngx_http_request_t *r, time_t timeout,
     cl.buf = b;
     cl.next = NULL;
 
-    r->headers_out.status = NGX_HTTP_OK;
+    r->headers_out.status = status;
 
     r->headers_out.content_length_n = b->last - b->pos;
 
