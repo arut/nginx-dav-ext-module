@@ -1428,7 +1428,7 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     node = ngx_slab_alloc_locked(lock->shpool, n);
     if (node == NULL) {
         ngx_shmtx_unlock(&lock->shpool->mutex);
-        return NGX_ERROR;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     ngx_memzero(node, sizeof(ngx_http_dav_ext_node_t));
@@ -1479,6 +1479,13 @@ ngx_http_dav_ext_lock_response(ngx_http_request_t *r, time_t timeout,
     ngx_table_elt_t           *h;
     ngx_http_dav_ext_entry_t   entry;
 
+    static u_char head[] =
+        "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
+        "<D:prop xmlns:D=\"DAV:\">\n";
+
+    static u_char tail[] =
+        "</D:prop>";
+
     ngx_memzero(&entry, sizeof(ngx_http_dav_ext_entry_t));
 
     entry.lock_timeout = timeout;
@@ -1486,28 +1493,21 @@ ngx_http_dav_ext_lock_response(ngx_http_request_t *r, time_t timeout,
     entry.lock_depth = depth;
     entry.lock_token = token;
 
-    len = sizeof("<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
-                 "<D:prop xmlns:D=\"DAV:\">\n"
-                 "</D:prop>") - 1;
-
-    len += ngx_http_dav_ext_format_lockdiscovery(r, NULL, &entry);
+    len = sizeof(head) - 1
+          + ngx_http_dav_ext_format_lockdiscovery(r, NULL, &entry)
+          + sizeof(tail) - 1;
 
     b = ngx_create_temp_buf(r->pool, len);
     if (b == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    b->last = ngx_cpymem(b->last,
-                  "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n",
-                  sizeof("<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n") - 1);
-
-    b->last = ngx_cpymem(b->last, "<D:prop xmlns:D=\"DAV:\">\n",
-                         sizeof("<D:prop xmlns:D=\"DAV:\">\n") - 1);
+    b->last = ngx_cpymem(b->last, head, sizeof(head) - 1);
 
     b->last = (u_char *) ngx_http_dav_ext_format_lockdiscovery(r, b->last,
                                                                &entry);
 
-    b->last = ngx_cpymem(b->last, "</D:prop>", sizeof("</D:prop>") - 1);
+    b->last = ngx_cpymem(b->last, tail, sizeof(tail) - 1);
 
     b->last_buf = (r == r->main) ? 1 : 0;
     b->last_in_chain = 1;
@@ -1536,10 +1536,11 @@ ngx_http_dav_ext_lock_response(ngx_http_request_t *r, time_t timeout,
     }
 
     ngx_str_set(&h->key, "Lock-Token");
+
     h->value.data = p;
 
     p = ngx_cpymem(p, "<urn:", 5);
-    p = ngx_hex_dump(p, (u_char *) &token, 4);
+    p = ngx_hex_dump(p, (u_char *) &token, 4); /* XXX endianness? */
     *p++ = '>';
 
     h->value.len = p - h->value.data;
