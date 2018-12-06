@@ -889,9 +889,6 @@ ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name)
 
             if (ch >= 'A' && ch <= 'Z') {
                 ch |= 0x20;
-
-            } else if (ch == '-') {
-                ch = '_';
             }
 
             if (name->data[n] != ch) {
@@ -1485,6 +1482,10 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
             break;
         }
 
+        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "http dav_ext lock expire \"%*s\"",
+                       node->len, node->data);
+
         ngx_queue_remove(q);
         ngx_slab_free_locked(lock->shpool, node);
     }
@@ -1529,6 +1530,10 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
             }
         }
 
+        ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "http dav_ext lock match \"%*s\" \"%*s\"",
+                       node->len, node->data, len, data);
+
         goto found;
     }
 
@@ -1544,6 +1549,7 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
 
     ngx_memcpy(&node->data, data, len);
 
+    node->len = len;
     node->token = token;
     node->expire = now + lock->timeout;
     node->infinite = (depth ? 1 : 0);
@@ -1751,9 +1757,16 @@ ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
 
     ngx_shmtx_unlock(&lock->shpool->mutex);
 
+    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "http dav_ext unlock no match \"%*s\"", len, data);
+
     return NGX_HTTP_NO_CONTENT;
 
 found:
+
+    ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "http dav_ext unlock match \"%*s\", tokens:%uxD %uxD",
+                   len, data, token, node->token);
 
     if (token == node->token) {
         ngx_queue_remove(q);
