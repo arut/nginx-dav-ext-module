@@ -91,7 +91,8 @@ static int ngx_http_dav_ext_xmlcmp(const char *xname, const char *sname);
 static ngx_int_t ngx_http_dav_ext_propfind(ngx_http_request_t *r);
 static ngx_int_t ngx_http_dav_ext_depth(ngx_http_request_t *r);
 static uint32_t ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name);
-static uintptr_t ngx_http_dav_ext_format_token(u_char *dst, uint32_t token);
+static uintptr_t ngx_http_dav_ext_format_token(u_char *dst, uint32_t token,
+    ngx_uint_t brackets);
 static ngx_int_t ngx_http_dav_ext_propfind_send_response(ngx_http_request_t *r,
     ngx_array_t *entries);
 static uintptr_t ngx_http_dav_ext_format_response(ngx_http_request_t *r,
@@ -932,17 +933,21 @@ ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name)
 
 
 static uintptr_t
-ngx_http_dav_ext_format_token(u_char *dst, uint32_t token)
+ngx_http_dav_ext_format_token(u_char *dst, uint32_t token, ngx_uint_t brackets)
 {
     ngx_uint_t  n;
 
     static u_char  hex[] = "0123456789abcdef";
 
     if (dst == NULL) {
-        return sizeof("<urn:deadbeef>") - 1;
+        return sizeof("<urn:deadbeef>") - 1 + (brackets ? 2 : 0);
     }
 
-    dst = ngx_cpymem(dst, "<urn:", 5);
+    if (brackets) {
+        *dst++ = '<';
+    }
+
+    dst = ngx_cpymem(dst, "urn:", 4);
 
     for (n = 0; n < 4; n++) {
         *dst++ = hex[token >> 28];
@@ -950,7 +955,9 @@ ngx_http_dav_ext_format_token(u_char *dst, uint32_t token)
         token <<= 8;
     }
 
-    *dst++ = '>';
+    if (brackets) {
+        *dst++ = '>';
+    }
 
     return (uintptr_t) dst;
 }
@@ -1207,7 +1214,7 @@ ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r, u_char *dst,
         len += NGX_TIME_T_LEN;
 
         /* token */
-        len += ngx_http_dav_ext_format_token(NULL, entry->lock_token);
+        len += ngx_http_dav_ext_format_token(NULL, entry->lock_token, 0);
 
         /* lockroot */
         len += entry->lock_root.len + ngx_escape_html(NULL,
@@ -1237,20 +1244,15 @@ ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r, u_char *dst,
     dst = ngx_cpymem(dst, "<D:owner></D:owner>\n",
                      sizeof("<D:owner></D:owner>\n") - 1);
 
-    dst = ngx_cpymem(dst, "<D:depth>", sizeof("<D:depth>") - 1);
-
-    if (entry->lock_depth == 0) {
-        *dst++ = '0';
-    } else {
-        dst = ngx_cpymem(dst, "infinity", sizeof("infinity") - 1);
-    }
+    dst = ngx_sprintf(dst, "<D:depth>%s</D:depth>\n",
+                     entry->lock_depth ? "infinity" : "0");
 
     dst = ngx_sprintf(dst, "<D:timeout>Second-%O</D:timeout>\n",
                       entry->lock_timeout);
 
     dst = ngx_cpymem(dst, "<D:locktoken><D:href>",
                      sizeof("<D:locktoken><D:href>") - 1);
-    dst = (u_char *) ngx_http_dav_ext_format_token(dst, entry->lock_token);
+    dst = (u_char *) ngx_http_dav_ext_format_token(dst, entry->lock_token, 0);
     dst = ngx_cpymem(dst, "</D:href></D:locktoken>\n",
                      sizeof("</D:href></D:locktoken>\n") - 1);
 
@@ -1622,7 +1624,7 @@ ngx_http_dav_ext_lock_response(ngx_http_request_t *r, ngx_uint_t status,
         "<D:prop xmlns:D=\"DAV:\">\n";
 
     static u_char tail[] =
-        "</D:prop>";
+        "</D:prop>\n";
 
     ngx_memzero(&entry, sizeof(ngx_http_dav_ext_entry_t));
 
@@ -1663,7 +1665,7 @@ ngx_http_dav_ext_lock_response(ngx_http_request_t *r, ngx_uint_t status,
 
     ngx_str_set(&r->headers_out.charset, "utf-8");
 
-    p = ngx_pnalloc(r->pool, ngx_http_dav_ext_format_token(NULL, token));
+    p = ngx_pnalloc(r->pool, ngx_http_dav_ext_format_token(NULL, token, 1));
     if (p == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
@@ -1676,7 +1678,7 @@ ngx_http_dav_ext_lock_response(ngx_http_request_t *r, ngx_uint_t status,
     ngx_str_set(&h->key, "Lock-Token");
 
     h->value.data = p;
-    h->value.len = (u_char *) ngx_http_dav_ext_format_token(p, token) - p;
+    h->value.len = (u_char *) ngx_http_dav_ext_format_token(p, token, 1) - p;
     h->hash = 1;
 
     rc = ngx_http_send_header(r);
