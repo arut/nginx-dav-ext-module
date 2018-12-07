@@ -447,6 +447,10 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
             return;
         }
 
+        if (ngx_buf_special(b)) {
+            continue;
+        }
+
         len += b->last - b->pos;
 
         if (!XML_Parse(parser, (const char*) b->pos, b->last - b->pos,
@@ -1146,8 +1150,10 @@ ngx_http_dav_ext_format_response(ngx_http_request_t *r, u_char *dst,
         }
 
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_GETCONTENTLENGTH) {
-            dst = ngx_sprintf(dst, "<D:getcontentlength>%O"
-                                   "</D:getcontentlength>\n", entry->size);
+            if (!entry->dir) {
+                dst = ngx_sprintf(dst, "<D:getcontentlength>%O"
+                                       "</D:getcontentlength>\n", entry->size);
+            }
         }
 
         if (ctx->props & NGX_HTTP_DAV_EXT_PROP_GETLASTMODIFIED) {
