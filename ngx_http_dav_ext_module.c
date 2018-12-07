@@ -244,6 +244,10 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
             return;
         }
 
+        if (ngx_buf_special(b)) {
+            continue;
+        }
+
         len += b->last - b->pos;
 
         if (!XML_Parse(parser, (const char*) b->pos, b->last - b->pos,
