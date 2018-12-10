@@ -83,7 +83,7 @@ typedef struct {
 
 static ngx_int_t ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_dav_ext_verify_lock(ngx_http_request_t *r,
-    ngx_str_t *uri);
+    ngx_str_t *uri, ngx_uint_t delete_lock);
 
 static ngx_int_t ngx_http_dav_ext_content_handler(ngx_http_request_t *r);
 static void ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r);
@@ -100,7 +100,8 @@ static ngx_int_t ngx_http_dav_ext_lock_response(ngx_http_request_t *r,
 static ngx_int_t ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r);
 
 static ngx_int_t ngx_http_dav_ext_depth(ngx_http_request_t *r);
-static uint32_t ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name);
+static uint32_t ngx_http_dav_ext_lock_token(ngx_http_request_t *r);
+static uint32_t ngx_http_dav_ext_if(ngx_http_request_t *r);
 static uintptr_t ngx_http_dav_ext_format_propfind(ngx_http_request_t *r,
     u_char *dst, ngx_http_dav_ext_entry_t *entry);
 static uintptr_t ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r,
@@ -147,7 +148,7 @@ static ngx_command_t  ngx_http_dav_ext_commands[] = {
       NULL },
 
     { ngx_string("dav_ext_lock"),
-      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
       ngx_http_dav_ext_lock,
       NGX_HTTP_LOC_CONF_OFFSET,
       0,
@@ -195,6 +196,7 @@ ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r)
     u_char                       *p, *last, *host;
     ngx_str_t                     uri;
     ngx_int_t                     rc;
+    ngx_uint_t                    delete_lock;
     ngx_table_elt_t              *dest;
     ngx_http_dav_ext_loc_conf_t  *dlcf;
 
@@ -206,7 +208,9 @@ ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r)
 
     if (r->method & (NGX_HTTP_PUT|NGX_HTTP_DELETE|NGX_HTTP_MKCOL|NGX_HTTP_MOVE))
     {
-        rc = ngx_http_dav_ext_verify_lock(r, &r->uri);
+        delete_lock = (r->method & (NGX_HTTP_DELETE|NGX_HTTP_MOVE)) ? 1 : 0;
+
+        rc = ngx_http_dav_ext_verify_lock(r, &r->uri, delete_lock);
         if (rc != NGX_OK) {
             return rc;
         }
@@ -273,7 +277,7 @@ destination_done:
         uri.data = p;
         uri.len = last - p;
 
-        rc = ngx_http_dav_ext_verify_lock(r, &uri);
+        rc = ngx_http_dav_ext_verify_lock(r, &uri, 0);
         if (rc != NGX_OK) {
             return rc;
         }
@@ -284,7 +288,8 @@ destination_done:
 
 
 static ngx_int_t
-ngx_http_dav_ext_verify_lock(ngx_http_request_t *r, ngx_str_t *uri)
+ngx_http_dav_ext_verify_lock(ngx_http_request_t *r, ngx_str_t *uri,
+    ngx_uint_t delete_lock)
 {
     u_char                       *data;
     size_t                        len;
@@ -295,9 +300,7 @@ ngx_http_dav_ext_verify_lock(ngx_http_request_t *r, ngx_str_t *uri)
     ngx_http_dav_ext_lock_t      *lock;
     ngx_http_dav_ext_loc_conf_t  *dlcf;
 
-    static ngx_str_t token_field = ngx_string("if");
-
-    token = ngx_http_dav_ext_token(r, &token_field);
+    token = ngx_http_dav_ext_if(r);
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
 
@@ -359,6 +362,10 @@ ngx_http_dav_ext_verify_lock(ngx_http_request_t *r, ngx_str_t *uri)
             }
         }
 
+        ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "http dav_ext lock match \"%*s\" \"%*s\"",
+                       node->len, node->data, len, data);
+
         goto found;
     }
 
@@ -379,7 +386,13 @@ found:
         return NGX_HTTP_PRECONDITION_FAILED;
     }
 
-    if (r->method == NGX_HTTP_DELETE && node->len == len) {
+    /*
+     * RFC4918:
+     * If a request causes the lock-root of any lock to become an
+     * unmapped URL, then the lock MUST also be deleted by that request.
+     */
+
+    if (delete_lock && node->len == len) {
         ngx_queue_remove(q);
         ngx_slab_free_locked(lock->shpool, node);
     }
@@ -702,9 +715,7 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
     if (rc == NGX_MAX_INT_T_VALUE) {
 
         /*
-         * RFC4918 allows us to return 403 error in this case.
-         * However we do not return the precondition code.
-         *
+         * RFC4918:
          * 403 Forbidden -  A server MAY reject PROPFIND requests on
          * collections with depth header of "Infinity", in which case
          * it SHOULD use this error with the precondition code
@@ -910,6 +921,8 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
 
         ngx_memcpy(p, name.data, name.len);
 
+        /* XXX fill lock-related fields */
+
         entry->name.data = p;
         entry->name.len = name.len;
 
@@ -1014,9 +1027,7 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     ngx_http_dav_ext_node_t      *node;
     ngx_http_dav_ext_loc_conf_t  *dlcf;
 
-    static ngx_str_t token_field = ngx_string("if");
-
-    token = ngx_http_dav_ext_token(r, &token_field);
+    token = ngx_http_dav_ext_if(r);
 
     while (token == 0) {
         token = ngx_random();
@@ -1031,6 +1042,18 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     rc = ngx_http_dav_ext_depth(r);
 
     if (rc == NGX_ERROR || rc == 1) {
+
+        /*
+         * RFC4918:
+         * There are two kinds of collection write locks.  A depth-0 write lock
+         * on a collection protects the collection properties plus the internal
+         * member URLs of that one collection, while not protecting the content
+         * or properties of member resources (if the collection itself has any
+         * entity bodies, those are also protected).  A depth-infinity write
+         * lock on a collection provides the same protection on that collection
+         * and also provides write lock protection on every member resource.
+         */
+
         return NGX_HTTP_BAD_REQUEST;
     }
 
@@ -1056,10 +1079,6 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
         if (node->expire >= now) {
             break;
         }
-
-        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "http dav_ext lock expire \"%*s\"",
-                       node->len, node->data);
 
         ngx_queue_remove(q);
         ngx_slab_free_locked(lock->shpool, node);
@@ -1112,7 +1131,10 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
         goto found;
     }
 
-    n = sizeof(ngx_http_dav_ext_node_t) + len - (len ? 1 : 0);
+    n = sizeof(ngx_http_dav_ext_node_t);
+    if (len) {
+        n += len - 1;
+    }
 
     node = ngx_slab_alloc_locked(lock->shpool, n);
     if (node == NULL) {
@@ -1143,10 +1165,26 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     status = NGX_HTTP_OK;
 
     if (ngx_file_info(path.data, &fi) == NGX_FILE_ERROR) {
+
+        /*
+         * RFC4918:
+         * A successful lock request to an unmapped URL MUST result in the
+         * creation of a locked (non-collection) resource with empty content.
+         */
+
         fd = ngx_open_file(path.data, NGX_FILE_RDONLY, NGX_FILE_CREATE_OR_OPEN,
                            NGX_FILE_DEFAULT_ACCESS);
 
         if (fd == NGX_INVALID_FILE) {
+
+            /*
+             * RFC4918:
+             * 409 (Conflict) - A resource cannot be created at the destination
+             * until one or more intermediate collections have been created.
+             * The server MUST NOT create those intermediate collections
+             * automatically.
+             */
+
             ngx_log_error(NGX_LOG_ERR, r->connection->log, ngx_errno,
                           ngx_open_file_n " \"%s\" failed", path.data);
             return NGX_HTTP_CONFLICT;
@@ -1159,9 +1197,6 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
         }
 
         status = NGX_HTTP_CREATED;
-
-    } else if (ngx_is_dir(&fi)) {
-        return NGX_HTTP_CONFLICT;
     }
 
     return ngx_http_dav_ext_lock_response(r, status, lock->timeout, depth,
@@ -1284,9 +1319,7 @@ ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
     ngx_http_dav_ext_node_t      *node;
     ngx_http_dav_ext_loc_conf_t  *dlcf;
 
-    static ngx_str_t token_field = ngx_string("lock-token");
-
-    token = ngx_http_dav_ext_token(r, &token_field);
+    token = ngx_http_dav_ext_lock_token(r);
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
 
@@ -1393,7 +1426,7 @@ ngx_http_dav_ext_depth(ngx_http_request_t *r)
 
 
 static uint32_t
-ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name)
+ngx_http_dav_ext_lock_token(ngx_http_request_t *r)
 {
     u_char            ch;
     uint32_t          token;
@@ -1401,6 +1434,8 @@ ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name)
     ngx_uint_t        i, n;
     ngx_list_part_t  *part;
     ngx_table_elt_t  *header;
+
+    static ngx_str_t name = ngx_string("lock-token");
 
     part = &r->headers_in.headers.part;
 
@@ -1422,20 +1457,103 @@ ngx_http_dav_ext_token(ngx_http_request_t *r, ngx_str_t *name)
             continue;
         }
 
-        for (n = 0; n < name->len && n < header[i].key.len; n++) {
+        for (n = 0; n < name.len && n < header[i].key.len; n++) {
             ch = header[i].key.data[n];
 
             if (ch >= 'A' && ch <= 'Z') {
                 ch |= 0x20;
             }
 
-            if (name->data[n] != ch) {
+            if (name.data[n] != ch) {
                 break;
             }
         }
 
-        if (n == name->len && n == header[i].key.len) {
+        if (n == name.len && n == header[i].key.len) {
             value = header[i].value;
+
+            if (value.len != sizeof("<urn:deadbeef>") - 1) {
+                return 0;
+            }
+
+            token = 0;
+
+            for (n = 0; n < 8; n++) {
+                ch = value.data[5 + n];
+
+                if (ch >= '0' && ch <= '9') {
+                    token = token * 16 + (ch - '0');
+                    continue;
+                }
+
+                ch = (u_char) (ch | 0x20);
+
+                if (ch >= 'a' && ch <= 'f') {
+                    token = token * 16 + (ch - 'a' + 10);
+                    continue;
+                }
+
+                return 0;
+            }
+
+            return token;
+        }
+    }
+
+    return 0;
+}
+
+
+static uint32_t
+ngx_http_dav_ext_if(ngx_http_request_t *r)
+{
+    u_char            ch;
+    uint32_t          token;
+    ngx_str_t         value;
+    ngx_uint_t        i, n;
+    ngx_list_part_t  *part;
+    ngx_table_elt_t  *header;
+
+    static ngx_str_t name = ngx_string("if");
+
+    part = &r->headers_in.headers.part;
+
+    header = part->elts;
+
+    for (i = 0; /* void */ ; i++) {
+
+        if (i >= part->nelts) {
+            if (part->next == NULL) {
+                break;
+            }
+
+            part = part->next;
+            header = part->elts;
+            i = 0;
+        }
+
+        if (header[i].hash == 0) {
+            continue;
+        }
+
+        for (n = 0; n < name.len && n < header[i].key.len; n++) {
+            ch = header[i].key.data[n];
+
+            if (ch >= 'A' && ch <= 'Z') {
+                ch |= 0x20;
+            }
+
+            if (name.data[n] != ch) {
+                break;
+            }
+        }
+
+        if (n == name.len && n == header[i].key.len) {
+            value = header[i].value;
+
+            /* XXX this parsing is not quite right
+             * XXX 10.4.  If Header, RFC4918
+             */
 
             if (value.len
                 && value.data[0] == '('
