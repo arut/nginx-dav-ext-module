@@ -2,7 +2,7 @@
 nginx-dav-ext-module
 ********************
 
-NGINX WebDAV PROPFIND and OPTIONS commands support.
+NGINX WebDAV PROPFIND/OPTIONS/LOCK/UNLOCK commands support.
 
 .. |copy|   unicode:: U+000A9 .. COPYRIGHT SIGN
 
@@ -19,6 +19,24 @@ The module can be built dynamically:
 .. code-block:: bash
 
     $ ./configure --with-http_dav_module --add-dynamic-module=/path/to/nginx-dav-ext-module
+
+
+Locking
+=======
+
+Locking model implemented in the module is subject to the following limitations:
+
+- Only single-token untagged ``If`` headers are currently supported::
+
+    If: (<urn:TOKEN>)
+
+See `RFC4918 If Header`_ for syntax details.
+
+- All currently held locks are kept in a list.
+Checking if an object is constrained by a lock requires O(n) operations.
+A huge number of simultaneously held locks may degrade performance.
+Thus it is not recommended to have a large lock timeout.
+
 
 Directives
 ==========
@@ -149,3 +167,4 @@ WebDAV with locking which works with MacOS client::
 
 .. _ngx_http_dav_module: http://nginx.org/en/docs/http/ngx_http_dav_module.html
 .. _nginx-tests: http://hg.nginx.org/nginx-tests
+.. _`RFC4918 If Header`: https://tools.ietf.org/html/rfc4918#section-10.4
