@@ -1597,7 +1597,7 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
     size_t                   len;
     ngx_http_dav_ext_ctx_t  *ctx;
 
-    static u_char head[] = 
+    static u_char head[] =
         "<D:response>\n"
         "<D:href>";
 
@@ -1623,7 +1623,6 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
         "<D:resourcetype/>\n"
         "<D:lockdiscovery/>\n"
         "<D:supportedlock/>\n";
-
 
     static u_char supportedlock[] =
         "<D:lockentry>\n"
@@ -1669,6 +1668,7 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
             /* getcontentlength */
             len += NGX_OFF_T_LEN;
 
+            /* lockdiscovery */
             len += ngx_http_dav_ext_format_lockdiscovery(r, NULL, entry);
 
             /* supportedlock */
@@ -1807,9 +1807,9 @@ ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r, u_char *dst,
                      sizeof("<D:owner></D:owner>\n") - 1);
 
     dst = ngx_sprintf(dst, "<D:depth>%s</D:depth>\n",
-                     entry->lock_depth ? "infinity" : "0");
+                      entry->lock_depth ? "infinity" : "0");
 
-    dst = ngx_sprintf(dst, "<D:timeout>Second-%O</D:timeout>\n",
+    dst = ngx_sprintf(dst, "<D:timeout>Second-%T</D:timeout>\n",
                       entry->lock_timeout);
 
     dst = ngx_cpymem(dst, "<D:locktoken><D:href>",
@@ -1825,8 +1825,11 @@ ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r, u_char *dst,
     dst = ngx_cpymem(dst, "</D:href></D:lockroot>\n",
                      sizeof("</D:href></D:lockroot>\n") - 1);
 
-    dst = ngx_cpymem(dst, "</D:activelock>\n</D:lockdiscovery>\n",
-                     sizeof("</D:activelock>\n</D:lockdiscovery>\n") - 1);
+    dst = ngx_cpymem(dst, "</D:activelock>\n",
+                     sizeof("</D:activelock>\n") - 1);
+
+    dst = ngx_cpymem(dst, "</D:lockdiscovery>\n",
+                     sizeof("</D:lockdiscovery>\n") - 1);
 
     return (uintptr_t) dst;
 }
@@ -1904,8 +1907,6 @@ ngx_http_dav_ext_init_zone(ngx_shm_zone_t *shm_zone, void *data)
 
     ngx_sprintf(lock->shpool->log_ctx, " in dav_ext zone \"%V\"%Z",
                 &shm_zone->shm.name);
-
-    lock->shpool->log_nomem = 0;
 
     return NGX_OK;
 }
