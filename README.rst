@@ -2,7 +2,7 @@
 nginx-dav-ext-module
 ********************
 
-nginx WebDAV_ PROPFIND,OPTIONS,LOCK,UNLOCK support.
+nginx_ WebDAV_ PROPFIND,OPTIONS,LOCK,UNLOCK support.
 
 .. contents::
 
@@ -10,28 +10,27 @@ nginx WebDAV_ PROPFIND,OPTIONS,LOCK,UNLOCK support.
 About
 =====
 
-Standard nginx ngx_http_dav_module_ provides partial WebDAV_ implementation and
+Standard nginx_ ngx_http_dav_module_ provides partial WebDAV_ implementation and
 only supports GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE methods.
 
-For full WebDAV_ support in nginx you need to enable the standard
+For full WebDAV_ support in nginx_ you need to enable the standard
 ngx_http_dav_module_ as well as this module for the missing methods.
 
 
 Build
 =====
 
-Building nginx with the module:
+Building nginx_ with the module:
 
 .. code-block:: bash
 
     # static module
     $ ./configure --with-http_dav_module --add-module=/path/to/nginx-dav-ext-module
 
-
     # dynamic module
     $ ./configure --with-http_dav_module --add-dynamic-module=/path/to/nginx-dav-ext-module
 
-.. note:: Trying to compile nginx with this module but without
+.. important:: Trying to compile nginx with this module but without
    ngx_http_dav_module_ will result in compilation error.
 
 
