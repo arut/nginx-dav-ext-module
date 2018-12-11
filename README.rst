@@ -30,8 +30,8 @@ Building nginx_ with the module:
     # dynamic module
     $ ./configure --with-http_dav_module --add-dynamic-module=/path/to/nginx-dav-ext-module
 
-.. important:: Trying to compile nginx with this module but without
-   ngx_http_dav_module_ will result in compilation error.
+Trying to compile nginx with this module but without ngx_http_dav_module_ will
+result in compilation error.
 
 
 Requirements
