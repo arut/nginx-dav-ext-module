@@ -1516,9 +1516,8 @@ ngx_http_dav_ext_lock_token(ngx_http_request_t *r)
 static uint32_t
 ngx_http_dav_ext_if(ngx_http_request_t *r)
 {
-    u_char            ch;
+    u_char            ch, *p, *last;
     uint32_t          token;
-    ngx_str_t         value;
     ngx_uint_t        i, n;
     ngx_list_part_t  *part;
     ngx_table_elt_t  *header;
@@ -1558,21 +1557,51 @@ ngx_http_dav_ext_if(ngx_http_request_t *r)
         }
 
         if (n == name.len && n == header[i].key.len) {
-            value = header[i].value;
+            p = header[i].value.data;
+            last = p + header[i].value.len;
+
+            if (p == last) {
+                return 0;
+            }
+
+            if (*p == '<') {
+                while (p != last && *p != '>') {
+                    p++;
+                }
+
+                if (p == last) {
+                    return 0;
+                }
+
+                p++;
+
+                while (p != last && (*p == ' ' || *p == '\t')) {
+                    p++;
+                }
+
+                if (p == last) {
+                    return 0;
+                }
+            }
 
             /*
-             * XXX only untagged lists with a single token are supported
+             * XXX only single-token lists are supported
              * RFC4918 10.4.  If Header
              */
 
-            if (value.len != sizeof("(<urn:deadbeef>)") - 1) {
+            if (last - p != sizeof("(<urn:deadbeef>)") - 1
+                || ngx_memcmp(p, "(<urn:", 6)
+                || ngx_memcmp(&p[14], ">)", 2))
+            {
                 return 0;
             }
+
+            p += 6;
 
             token = 0;
 
             for (n = 0; n < 8; n++) {
-                ch = value.data[6 + n];
+                ch = *p++;
 
                 if (ch >= '0' && ch <= '9') {
                     token = token * 16 + (ch - '0');

@@ -46,10 +46,13 @@ Locking
 
 Locking model implemented in the module is subject to the following limitations:
 
-- Only single-token untagged ``If`` headers are currently supported::
+- Only single-token ``If`` headers are currently supported::
 
     If: (<urn:TOKEN>)
+    If: <TAG> (<urn:TOKEN>)
 
+  The condition is not evaluated to make a request conditional.
+  It is only used to indicate the client's knowledge of the lock token.
   See `RFC4918 If Header`_ for syntax details.
 
 - All currently held locks are kept in a list.
