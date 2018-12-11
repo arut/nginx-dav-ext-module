@@ -99,7 +99,8 @@ static ngx_int_t ngx_http_dav_ext_lock_response(ngx_http_request_t *r,
     ngx_uint_t status, time_t timeout, ngx_uint_t depth, uint32_t token);
 static ngx_int_t ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r);
 
-static ngx_int_t ngx_http_dav_ext_depth(ngx_http_request_t *r);
+static ngx_int_t ngx_http_dav_ext_depth(ngx_http_request_t *r,
+    ngx_int_t default_depth);
 static uint32_t ngx_http_dav_ext_lock_token(ngx_http_request_t *r);
 static uint32_t ngx_http_dav_ext_if(ngx_http_request_t *r);
 static uintptr_t ngx_http_dav_ext_format_propfind(ngx_http_request_t *r,
@@ -706,7 +707,7 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    rc = ngx_http_dav_ext_depth(r);
+    rc = ngx_http_dav_ext_depth(r, 0);
 
     if (rc == NGX_ERROR) {
         return NGX_HTTP_BAD_REQUEST;
@@ -1039,19 +1040,20 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
 
     now = ngx_time();
 
-    rc = ngx_http_dav_ext_depth(r);
+    /*
+     * RFC4918:
+     * If no Depth header is submitted on a LOCK request, then the request
+     * MUST act as if a "Depth:infinity" had been submitted.
+     */
+
+    rc = ngx_http_dav_ext_depth(r, NGX_MAX_INT_T_VALUE);
 
     if (rc == NGX_ERROR || rc == 1) {
 
         /*
          * RFC4918:
-         * There are two kinds of collection write locks.  A depth-0 write lock
-         * on a collection protects the collection properties plus the internal
-         * member URLs of that one collection, while not protecting the content
-         * or properties of member resources (if the collection itself has any
-         * entity bodies, those are also protected).  A depth-infinity write
-         * lock on a collection provides the same protection on that collection
-         * and also provides write lock protection on every member resource.
+         * Values other than 0 or infinity MUST NOT be used with the Depth
+         * header on a LOCK method.
          */
 
         return NGX_HTTP_BAD_REQUEST;
@@ -1388,14 +1390,14 @@ found:
 
 
 static ngx_int_t
-ngx_http_dav_ext_depth(ngx_http_request_t *r)
+ngx_http_dav_ext_depth(ngx_http_request_t *r, ngx_int_t default_depth)
 {
     ngx_table_elt_t  *depth;
 
     depth = r->headers_in.depth;
 
     if (depth == NULL) {
-        return 0;
+        return default_depth;
     }
 
     if (depth->value.len == 1) {
