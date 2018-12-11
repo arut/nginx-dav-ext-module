@@ -689,17 +689,22 @@ ngx_http_dav_ext_xmlcmp(const char *xname, const char *sname)
 static ngx_int_t
 ngx_http_dav_ext_propfind(ngx_http_request_t *r)
 {
-    size_t                     root, allocated;
-    u_char                    *p, *last, *filename;
-    uintptr_t                  escape;
-    ngx_int_t                  rc;
-    ngx_err_t                  err;
-    ngx_str_t                  path, name, uri;
-    ngx_dir_t                  dir;
-    ngx_uint_t                 depth;
-    ngx_array_t                entries;
-    ngx_file_info_t            fi;
-    ngx_http_dav_ext_entry_t  *entry;
+    size_t                        root, allocated;
+    u_char                       *p, *last, *filename;
+    uintptr_t                     escape;
+    ngx_int_t                     rc;
+    ngx_err_t                     err;
+    ngx_str_t                     path, name, uri;
+    ngx_dir_t                     dir;
+    ngx_uint_t                    depth, lock_supported;
+    ngx_array_t                   entries;
+    ngx_file_info_t               fi;
+    ngx_http_dav_ext_entry_t     *entry;
+    ngx_http_dav_ext_loc_conf_t  *dlcf;
+
+    dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
+
+    lock_supported = dlcf->shm_zone ? 1 : 0;
 
     if (ngx_array_init(&entries, r->pool, 40, sizeof(ngx_http_dav_ext_entry_t))
         != NGX_OK)
@@ -810,6 +815,7 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
     entry->dir = ngx_is_dir(&fi);
     entry->mtime = ngx_file_mtime(&fi);
     entry->size = ngx_file_size(&fi);
+    entry->lock_supported = lock_supported;
 
     if (depth == 0 || !entry->dir) {
         return ngx_http_dav_ext_propfind_response(r, &entries);
@@ -930,6 +936,7 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
         entry->dir = ngx_de_is_dir(&dir);
         entry->mtime = ngx_de_mtime(&dir);
         entry->size = ngx_de_size(&dir);
+        entry->lock_supported = lock_supported;
     }
 
     if (ngx_close_dir(&dir) == NGX_ERROR) {
