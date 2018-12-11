@@ -2,7 +2,7 @@
 nginx-dav-ext-module
 ********************
 
-NGINX WebDAV_ PROPFIND,OPTIONS,LOCK,UNLOCK support.
+nginx WebDAV_ PROPFIND,OPTIONS,LOCK,UNLOCK support.
 
 .. contents::
 
@@ -10,24 +10,36 @@ NGINX WebDAV_ PROPFIND,OPTIONS,LOCK,UNLOCK support.
 About
 =====
 
-Standard NGINX ngx_http_dav_module_ provides partial WebDAV_ implementation and
+Standard nginx ngx_http_dav_module_ provides partial WebDAV_ implementation and
 only supports GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE methods.
 
-For full WebDAV_ support in NGINX you need to enable the standard
-ngx_http_dav_module_ as well as this module for the missing methods:
+For full WebDAV_ support in nginx you need to enable the standard
+ngx_http_dav_module_ as well as this module for the missing methods.
+
+
+Build
+=====
+
+Building nginx with the module:
 
 .. code-block:: bash
 
+    # static module
     $ ./configure --with-http_dav_module --add-module=/path/to/nginx-dav-ext-module
 
-The module can be built dynamically:
 
-.. code-block:: bash
-
+    # dynamic module
     $ ./configure --with-http_dav_module --add-dynamic-module=/path/to/nginx-dav-ext-module
 
-.. warning:: Trying to compile NGINX with this module but without
-ngx_http_dav_module_ will result in compilation error.
+.. note:: Trying to compile nginx with this module but without
+   ngx_http_dav_module_ will result in compilation error.
+
+
+Requirements
+============
+
+- nginx_ version >= 1.13.4
+- ``libexpat-dev``
 
 
 Locking
@@ -88,12 +100,6 @@ This zone must be defined with the ``dav_ext_lock_zone`` directive.
 Note that even though this directive enables locking capabilities in the
 current scope, HTTP methods LOCK and UNLOCK should also be explicitly specified
 in the ``dav_ext_methods``.
-
-
-Requirements
-============
-
-``libexpat-dev``
 
 
 Testing
@@ -176,5 +182,6 @@ WebDAV with locking which works with MacOS client::
 
 .. _ngx_http_dav_module: http://nginx.org/en/docs/http/ngx_http_dav_module.html
 .. _nginx-tests: http://hg.nginx.org/nginx-tests
+.. _nginx: http://nginx.org
 .. _WebDAV: https://tools.ietf.org/html/rfc4918
 .. _`RFC4918 If Header`: https://tools.ietf.org/html/rfc4918#section-10.4
