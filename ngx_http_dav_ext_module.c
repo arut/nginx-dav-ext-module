@@ -1553,26 +1553,19 @@ ngx_http_dav_ext_if(ngx_http_request_t *r)
         if (n == name.len && n == header[i].key.len) {
             value = header[i].value;
 
-            /* XXX this parsing is not quite right
-             * XXX 10.4.  If Header, RFC4918
+            /*
+             * XXX only untagged lists with a single token are supported
+             * RFC4918 10.4.  If Header
              */
 
-            if (value.len
-                && value.data[0] == '('
-                && value.data[value.len - 1] == ')')
-            {
-                value.data++;
-                value.len -= 2;
-            }
-
-            if (value.len != sizeof("<urn:deadbeef>") - 1) {
+            if (value.len != sizeof("(<urn:deadbeef>)") - 1) {
                 return 0;
             }
 
             token = 0;
 
             for (n = 0; n < 8; n++) {
-                ch = value.data[5 + n];
+                ch = value.data[6 + n];
 
                 if (ch >= '0' && ch <= '9') {
                     token = token * 16 + (ch - '0');
