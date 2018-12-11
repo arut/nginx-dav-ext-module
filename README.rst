@@ -4,7 +4,7 @@ nginx-dav-ext-module
 
 NGINX WebDAV PROPFIND/OPTIONS/LOCK/UNLOCK commands support.
 
-.. |copy|   unicode:: U+000A9 .. COPYRIGHT SIGN
+.. contents::
 
 For full WebDAV support in NGINX you need to enable the standard
 ngx_http_dav_module_ providing partial WebDAV implementation, as well as this
