@@ -30,12 +30,12 @@ Locking model implemented in the module is subject to the following limitations:
 
     If: (<urn:TOKEN>)
 
-See `RFC4918 If Header`_ for syntax details.
+  See `RFC4918 If Header`_ for syntax details.
 
 - All currently held locks are kept in a list.
-Checking if an object is constrained by a lock requires O(n) operations.
-A huge number of simultaneously held locks may degrade performance.
-Thus it is not recommended to have a large lock timeout.
+  Checking if an object is constrained by a lock requires O(n) operations.
+  A huge number of simultaneously held locks may degrade performance.
+  Thus it is not recommended to have a large lock timeout.
 
 
 Directives
