@@ -541,11 +541,11 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
                        "http dav_ext lock");
 
         /*
-         * Body is expected to have lock type, but since we
-         * only support write/exclusive locks, we ignore it.
-         * Ideally we could produce an error if a lock of
-         * another type is requested, but the amount of work
-         * required for that is not worth it.
+         * Body is expected to carry the requested lock type, but
+         * since we only support write/exclusive locks, we ignore it.
+         * Ideally we could throw an error if a lock of another type
+         * is requested, but the amount of work required for that is
+         * not worth it.
          */
 
         rc = ngx_http_discard_request_body(r);
