@@ -38,7 +38,7 @@ Requirements
 ============
 
 - nginx_ version >= 1.13.4
-- ``libxml2``+``libxslt``
+- ``libxml2`` + ``libxslt``
 
 The ``libxslt`` library is technically redundant and is only required since this
 combination is supported by nginx_ for the nginx libxslt module.
