@@ -82,6 +82,8 @@ typedef struct {
 
 
 static ngx_int_t ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_dav_ext_strip_uri(ngx_http_request_t *r,
+    ngx_str_t *uri);
 static ngx_int_t ngx_http_dav_ext_verify_lock(ngx_http_request_t *r,
     ngx_str_t *uri, ngx_uint_t delete_lock);
 
@@ -106,7 +108,7 @@ static ngx_int_t ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_dav_ext_depth(ngx_http_request_t *r,
     ngx_int_t default_depth);
 static uint32_t ngx_http_dav_ext_lock_token(ngx_http_request_t *r);
-static uint32_t ngx_http_dav_ext_if(ngx_http_request_t *r);
+static uint32_t ngx_http_dav_ext_if(ngx_http_request_t *r, ngx_str_t *uri);
 static uintptr_t ngx_http_dav_ext_format_propfind(ngx_http_request_t *r,
     u_char *dst, ngx_http_dav_ext_entry_t *entry);
 static uintptr_t ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r,
@@ -197,8 +199,6 @@ ngx_module_t  ngx_http_dav_ext_module = {
 static ngx_int_t
 ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r)
 {
-    size_t                        len;
-    u_char                       *p, *last, *host;
     ngx_str_t                     uri;
     ngx_int_t                     rc;
     ngx_uint_t                    delete_lock;
@@ -227,66 +227,83 @@ ngx_http_dav_ext_precontent_handler(ngx_http_request_t *r)
             return NGX_DECLINED;
         }
 
-        p = dest->value.data;
+        uri.data = dest->value.data;
+        uri.len = dest->value.len;
 
-        if (p[0] == '/') {
-            last = p + dest->value.len;
-            goto destination_done;
-        }
-
-        len = r->headers_in.server.len;
-
-        if (len == 0) {
+        if (ngx_http_dav_ext_strip_uri(r, &uri) != NGX_OK) {
             return NGX_DECLINED;
         }
-
-#if (NGX_HTTP_SSL)
-
-        if (r->connection->ssl) {
-            if (ngx_strncmp(dest->value.data, "https://", sizeof("https://") - 1)
-                != 0)
-            {
-                return NGX_DECLINED;
-            }
-
-            host = dest->value.data + sizeof("https://") - 1;
-
-        } else
-#endif
-        {
-            if (ngx_strncmp(dest->value.data, "http://", sizeof("http://") - 1)
-                != 0)
-            {
-                return NGX_DECLINED;
-            }
-
-            host = dest->value.data + sizeof("http://") - 1;
-        }
-
-        if (ngx_strncmp(host, r->headers_in.server.data, len) != 0) {
-            return NGX_DECLINED;
-        }
-
-        last = dest->value.data + dest->value.len;
-
-        for (p = host + len; p < last; p++) {
-            if (*p == '/') {
-                goto destination_done;
-            }
-        }
-
-        return NGX_DECLINED;
-
-destination_done:
-
-        uri.data = p;
-        uri.len = last - p;
 
         rc = ngx_http_dav_ext_verify_lock(r, &uri, 0);
         if (rc != NGX_OK) {
             return rc;
         }
     }
+
+    return NGX_DECLINED;
+}
+
+
+static ngx_int_t
+ngx_http_dav_ext_strip_uri(ngx_http_request_t *r, ngx_str_t *uri)
+{
+    u_char  *p, *last, *host;
+    size_t   len;
+
+    if (uri->data[0] == '/') {
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "http dav_ext strip uri:\"%V\" unchanged", uri);
+        return NGX_OK;
+    }
+
+    len = r->headers_in.server.len;
+
+    if (len == 0) {
+        goto failed;
+    }
+
+#if (NGX_HTTP_SSL)
+
+    if (r->connection->ssl) {
+        if (ngx_strncmp(uri->data, "https://", sizeof("https://") - 1) != 0) {
+            goto failed;
+        }
+
+        host = uri->data + sizeof("https://") - 1;
+
+    } else
+#endif
+    {
+        if (ngx_strncmp(uri->data, "http://", sizeof("http://") - 1) != 0) {
+            goto failed;
+        }
+
+        host = uri->data + sizeof("http://") - 1;
+    }
+
+    if (ngx_strncmp(host, r->headers_in.server.data, len) != 0) {
+        goto failed;
+    }
+
+    last = uri->data + uri->len;
+
+    for (p = host + len; p != last; p++) {
+        if (*p == '/') {
+            ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "http dav_ext strip uri \"%V\" new:\"%*s\"",
+                           uri, last - p, p);
+
+            uri->data = p;
+            uri->len = last - p;
+
+            return NGX_OK;
+        }
+    }
+
+failed:
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "http dav_ext strip uri \"%V\" failed", uri);
 
     return NGX_DECLINED;
 }
@@ -305,7 +322,7 @@ ngx_http_dav_ext_verify_lock(ngx_http_request_t *r, ngx_str_t *uri,
     ngx_http_dav_ext_lock_t      *lock;
     ngx_http_dav_ext_loc_conf_t  *dlcf;
 
-    token = ngx_http_dav_ext_if(r);
+    token = ngx_http_dav_ext_if(r, uri);
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
 
@@ -1151,7 +1168,7 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     ngx_http_dav_ext_node_t      *node;
     ngx_http_dav_ext_loc_conf_t  *dlcf;
 
-    token = ngx_http_dav_ext_if(r);
+    token = ngx_http_dav_ext_if(r, &r->uri);
 
     while (token == 0) {
         token = ngx_random();
@@ -1633,15 +1650,19 @@ ngx_http_dav_ext_lock_token(ngx_http_request_t *r)
 
 
 static uint32_t
-ngx_http_dav_ext_if(ngx_http_request_t *r)
+ngx_http_dav_ext_if(ngx_http_request_t *r, ngx_str_t *uri)
 {
-    u_char            ch, *p, *last;
+    u_char            ch, *p;
     uint32_t          token;
+    ngx_str_t         tag;
     ngx_uint_t        i, n;
     ngx_list_part_t  *part;
     ngx_table_elt_t  *header;
 
     static ngx_str_t name = ngx_string("if");
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "http dav_ext if \"%V\"", uri);
 
     part = &r->headers_in.headers.part;
 
@@ -1677,67 +1698,128 @@ ngx_http_dav_ext_if(ngx_http_request_t *r)
 
         if (n == name.len && n == header[i].key.len) {
             p = header[i].value.data;
-            last = p + header[i].value.len;
 
-            if (p == last) {
-                return 0;
-            }
+            tag = r->uri;
 
-            if (*p == '<') {
-                while (p != last && *p != '>') {
-                    p++;
+            while (*p != '\0') {
+
+                ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                               "http dav_ext if list \"%s\"", p);
+
+                while (*p == ' ') { p++; }
+
+                if (*p == '<') {
+                    tag.data = ++p;
+
+                    while (*p != '\0' && *p != '>') { p++; }
+
+                    if (*p == '\0') {
+                        break;
+                    }
+
+                    tag.len = p++ - tag.data;
+
+                    if (ngx_http_dav_ext_strip_uri(r, &tag) != NGX_OK) {
+                        while (*p != '\0' && *p != ')') { p++; }
+
+                        if (*p == ')') {
+                            p++;
+                        }
+
+                        continue;
+                    }
+
+                    while (*p == ' ') { p++; }
                 }
 
-                if (p == last) {
-                    return 0;
+                if (*p != '(') {
+                    break;
                 }
 
                 p++;
 
-                while (p != last && (*p == ' ' || *p == '\t')) {
-                    p++;
-                }
+                if (tag.len != uri->len
+                    || ngx_memcmp(tag.data, uri->data, tag.len))
+                {
+                    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                                   "http dav_ext if tag mismatch \"%V\"", &tag);
 
-                if (p == last) {
-                    return 0;
-                }
-            }
+                    while (*p != '\0' && *p != ')') { p++; }
 
-            /*
-             * XXX only single-token lists are supported
-             * RFC4918 10.4.  If Header
-             */
+                    if (*p == ')') {
+                        p++;
+                    }
 
-            if (last - p != sizeof("(<urn:deadbeef>)") - 1
-                || ngx_memcmp(p, "(<urn:", 6)
-                || ngx_memcmp(&p[14], ">)", 2))
-            {
-                return 0;
-            }
-
-            p += 6;
-
-            token = 0;
-
-            for (n = 0; n < 8; n++) {
-                ch = *p++;
-
-                if (ch >= '0' && ch <= '9') {
-                    token = token * 16 + (ch - '0');
                     continue;
                 }
 
-                ch = (u_char) (ch | 0x20);
+                for ( ;; ) {
 
-                if (ch >= 'a' && ch <= 'f') {
-                    token = token * 16 + (ch - 'a' + 10);
-                    continue;
+                    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                                   "http dav_ext if condition \"%s\"", p);
+
+                    if (ngx_strcmp(p, "Not") == 0) {
+                        goto next;
+                    }
+
+                    if (*p == '[') {
+                        goto next;
+                    }
+
+                    if (ngx_strncmp(p, "<urn:", 5)) {
+                        goto next;
+                    }
+
+                    p += 5;
+
+                    token = 0;
+
+                    for (n = 0; n < 8; n++) {
+                        ch = *p++;
+
+                        if (ch >= '0' && ch <= '9') {
+                            token = token * 16 + (ch - '0');
+                            continue;
+                        }
+
+                        ch = (u_char) (ch | 0x20);
+
+                        if (ch >= 'a' && ch <= 'f') {
+                            token = token * 16 + (ch - 'a' + 10);
+                            continue;
+                        }
+
+                        goto next;
+                    }
+
+                    if (*p != '>') {
+                        goto next;
+                    }
+
+                    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                                   "http dav_ext if token: %uxD", token);
+
+                    return token;
+
+                next:
+
+                    while (*p != '\0' && *p != ' ' && *p != ')') { p++; }
+
+                    while (*p == ' ') { p++; }
+
+                    if (*p == '\0') {
+                        break;
+                    }
+
+                    if (*p == ')') {
+                        p++;
+                        break;
+                    }
                 }
-
-                return 0;
             }
 
-            return token;
+            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "http dav_ext if header mismatch");
         }
     }
 
