@@ -372,11 +372,16 @@ ngx_http_dav_ext_lock_lookup(ngx_http_request_t *r,
     ngx_http_dav_ext_lock_t *lock, ngx_str_t *uri, ngx_int_t depth)
 {
     time_t                    now;
+    u_char                   *p;
     ngx_queue_t              *q;
     ngx_http_dav_ext_node_t  *node;
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "http dav_ext lock lookup \"%V\"", uri);
+
+    if (uri->len == 0) {
+        return NULL;
+    }
 
     now = ngx_time();
 
@@ -404,15 +409,16 @@ ngx_http_dav_ext_lock_lookup(ngx_http_request_t *r,
             }
 
             if (uri->len > node->len) {
-                if (uri->data[node->len] != '/') {
+                if (node->data[node->len - 1] != '/') {
                     continue;
                 }
 
-                if (!node->infinite
-                    && ngx_strlchr(uri->data + node->len + 1,
-                                   uri->data + uri->len, '/'))
-                {
-                    continue;
+                if (!node->infinite) {
+                    p = ngx_strlchr(uri->data + node->len, uri->data + uri->len,
+                                    '/');
+                    if (p && p != uri->data + uri->len - 1) {
+                        continue;
+                    }
                 }
             }
 
@@ -430,15 +436,16 @@ ngx_http_dav_ext_lock_lookup(ngx_http_request_t *r,
                 continue;
             }
 
-            if (node->data[uri->len] != '/') {
+            if (uri->data[uri->len - 1] != '/') {
                 continue;
             }
 
-            if (depth == 0
-                && ngx_strlchr(node->data + uri->len + 1,
-                               node->data + node->len, '/'))
-            {
-                continue;
+            if (depth == 0) {
+                p = ngx_strlchr(node->data + uri->len, node->data + node->len,
+                                '/');
+                if (p && p != node->data + node->len - 1) {
+                    continue;
+                }
             }
 
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -1113,12 +1120,16 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     uint32_t                      token;
     ngx_fd_t                      fd;
     ngx_int_t                     rc, depth;
-    ngx_str_t                     path, uri;
+    ngx_str_t                     path;
     ngx_uint_t                    status;
     ngx_file_info_t               fi;
     ngx_http_dav_ext_lock_t      *lock;
     ngx_http_dav_ext_node_t      *node;
     ngx_http_dav_ext_loc_conf_t  *dlcf;
+
+    if (r->uri.len == 0) {
+        return NGX_HTTP_BAD_REQUEST;
+    }
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
 
@@ -1151,13 +1162,11 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
         token = ngx_random();
     }
 
-    uri = r->uri;
-
     now = ngx_time();
 
     ngx_shmtx_lock(&lock->shpool->mutex);
 
-    node = ngx_http_dav_ext_lock_lookup(r, lock, &uri, depth);
+    node = ngx_http_dav_ext_lock_lookup(r, lock, &r->uri, depth);
 
     if (node) {
         if (node->token != token) {
@@ -1179,10 +1188,7 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
                                               depth, token);
     }
 
-    n = sizeof(ngx_http_dav_ext_node_t);
-    if (uri.len) {
-        n += uri.len - 1;
-    }
+    n = sizeof(ngx_http_dav_ext_node_t) + r->uri.len - 1;
 
     node = ngx_slab_alloc_locked(lock->shpool, n);
     if (node == NULL) {
@@ -1192,9 +1198,9 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
 
     ngx_memzero(node, sizeof(ngx_http_dav_ext_node_t));
 
-    ngx_memcpy(&node->data, uri.data, uri.len);
+    ngx_memcpy(&node->data, r->uri.data, r->uri.len);
 
-    node->len = uri.len;
+    node->len = r->uri.len;
     node->token = token;
     node->expire = now + lock->timeout;
     node->infinite = (depth ? 1 : 0);
@@ -1360,7 +1366,7 @@ ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
 
     node = ngx_http_dav_ext_lock_lookup(r, lock, &r->uri, -1);
 
-    if (node == NULL || node->len != r->uri.len || node->token != token) {
+    if (node == NULL || node->token != token) {
         ngx_shmtx_unlock(&lock->shpool->mutex);
         return NGX_HTTP_NO_CONTENT;
     }
@@ -1839,7 +1845,7 @@ ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r, u_char *dst,
     time_t  now;
 
     if (dst == NULL) {
-        if (entry->lock_root.len == 0) {
+        if (entry->lock_token == 0) {
             return sizeof("<D:lockdiscovery/>\n") - 1;
         }
 
@@ -1867,7 +1873,7 @@ ngx_http_dav_ext_format_lockdiscovery(ngx_http_request_t *r, u_char *dst,
         return len;
     }
 
-    if (entry->lock_root.len == 0) {
+    if (entry->lock_token == 0) {
         dst = ngx_cpymem(dst, "<D:lockdiscovery/>\n",
                          sizeof("<D:lockdiscovery/>\n") - 1);
         return (uintptr_t) dst;
