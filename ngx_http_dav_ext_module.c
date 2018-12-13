@@ -100,7 +100,7 @@ static void ngx_http_dav_ext_propfind_xml_end(void *data,
     const xmlChar *localname, const xmlChar *prefix, const xmlChar *uri);
 static ngx_int_t ngx_http_dav_ext_propfind(ngx_http_request_t *r);
 static ngx_int_t ngx_http_dav_ext_set_locks(ngx_http_request_t *r,
-    ngx_str_t *uri, ngx_http_dav_ext_entry_t *entry);
+    ngx_http_dav_ext_entry_t *entry);
 static ngx_int_t ngx_http_dav_ext_propfind_response(ngx_http_request_t *r,
     ngx_array_t *entries);
 static ngx_int_t ngx_http_dav_ext_lock_handler(ngx_http_request_t *r);
@@ -738,10 +738,9 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
 {
     size_t                        root, allocated;
     u_char                       *p, *last, *filename;
-    uintptr_t                     escape;
     ngx_int_t                     rc;
     ngx_err_t                     err;
-    ngx_str_t                     path, name, uri;
+    ngx_str_t                     path, name;
     ngx_dir_t                     dir;
     ngx_uint_t                    depth;
     ngx_array_t                   entries;
@@ -821,31 +820,6 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
         }
     }
 
-    if (r->valid_unparsed_uri) {
-        uri = r->unparsed_uri;
-
-    } else {
-        escape = 2 * ngx_escape_uri(NULL, r->uri.data, r->uri.len,
-                                    NGX_ESCAPE_URI);
-        if (escape == 0) {
-            uri = r->uri;
-
-        } else {
-            uri.data = ngx_pnalloc(r->pool, r->uri.len + escape);
-            if (uri.data == NULL) {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-
-            p = (u_char *) ngx_escape_uri(uri.data, r->uri.data, r->uri.len,
-                                          NGX_ESCAPE_URI);
-            uri.len = p - uri.data;
-        }
-    }
-
-    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "http dav_ext propfind name:\"%V\", uri:\"%V\"",
-                   &name, &uri);
-
     entry = ngx_array_push(&entries);
     if (entry == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -853,15 +827,19 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
 
     ngx_memzero(entry, sizeof(ngx_http_dav_ext_entry_t));
 
-    entry->uri = uri;
+    entry->uri = r->uri;
     entry->name = name;
     entry->dir = ngx_is_dir(&fi);
     entry->mtime = ngx_file_mtime(&fi);
     entry->size = ngx_file_size(&fi);
 
-    if (ngx_http_dav_ext_set_locks(r, &r->uri, entry) != NGX_OK) {
+    if (ngx_http_dav_ext_set_locks(r, entry) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
+
+    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "http dav_ext propfind name:\"%V\", uri:\"%V\"",
+                   &entry->name, &entry->uri);
 
     if (depth == 0 || !entry->dir) {
         return ngx_http_dav_ext_propfind_response(r, &entries);
@@ -936,36 +914,6 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
             }
         }
 
-        escape = 2 * ngx_escape_uri(NULL, name.data, name.len,
-                                    NGX_ESCAPE_URI_COMPONENT);
-
-        p = ngx_pnalloc(r->pool, uri.len + 1 + name.len + escape + 1);
-        if (p == NULL) {
-            rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
-            break;
-        }
-
-        entry->uri.data = p;
-
-        p = ngx_cpymem(p, uri.data, uri.len);
-
-        if (uri.len && uri.data[uri.len - 1] != '/') {
-            *p++ = '/';
-        }
-
-        p = (u_char *) ngx_escape_uri(p, name.data, name.len,
-                                      NGX_ESCAPE_URI_COMPONENT);
-
-        if (ngx_de_is_dir(&dir)) {
-            *p++ = '/';
-        }
-
-        entry->uri.len = p - entry->uri.data;
-
-        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "http dav_ext propfind child name:\"%V\", uri:\"%V\"",
-                       &name, &entry->uri);
-
         p = ngx_pnalloc(r->pool, name.len);
         if (p == NULL) {
             rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -973,25 +921,40 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
         }
 
         ngx_memcpy(p, name.data, name.len);
-
         entry->name.data = p;
         entry->name.len = name.len;
+
+        p = ngx_pnalloc(r->pool, r->uri.len + 1 + name.len + 1);
+        if (p == NULL) {
+            rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
+            break;
+        }
+
+        entry->uri.data = p;
+        p = ngx_cpymem(p, r->uri.data, r->uri.len);
+
+        if (r->uri.len && r->uri.data[r->uri.len - 1] != '/') {
+            *p++ = '/';
+        }
+
+        p = ngx_cpymem(p, name.data, name.len);
+        if (ngx_de_is_dir(&dir)) {
+            *p++ = '/';
+        }
+
+        entry->uri.len = p - entry->uri.data;
 
         entry->dir = ngx_de_is_dir(&dir);
         entry->mtime = ngx_de_mtime(&dir);
         entry->size = ngx_de_size(&dir);
 
-        /*
-         * XXX
-         * - this may be slow, check flags?
-         * - we only have urlencoded uri, but need unencoded
-         */
-
-        /*
-        if (ngx_http_dav_ext_set_locks(r, uri?, entry) != NGX_OK) {
+        if (ngx_http_dav_ext_set_locks(r, entry) != NGX_OK) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
-        */
+
+        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "http dav_ext propfind child name:\"%V\", uri:\"%V\"",
+                       &entry->name, &entry->uri);
     }
 
     if (ngx_close_dir(&dir) == NGX_ERROR) {
@@ -1008,7 +971,7 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
 
 
 static ngx_int_t
-ngx_http_dav_ext_set_locks(ngx_http_request_t *r, ngx_str_t *uri,
+ngx_http_dav_ext_set_locks(ngx_http_request_t *r,
     ngx_http_dav_ext_entry_t *entry)
 {
     ngx_http_dav_ext_node_t      *node;
@@ -1028,7 +991,7 @@ ngx_http_dav_ext_set_locks(ngx_http_request_t *r, ngx_str_t *uri,
 
     ngx_shmtx_lock(&lock->shpool->mutex);
 
-    node = ngx_http_dav_ext_lock_lookup(r, lock, uri, -1);
+    node = ngx_http_dav_ext_lock_lookup(r, lock, &entry->uri, -1);
 
     if (node == NULL) {
         ngx_shmtx_unlock(&lock->shpool->mutex);
@@ -1058,6 +1021,8 @@ static ngx_int_t
 ngx_http_dav_ext_propfind_response(ngx_http_request_t *r, ngx_array_t *entries)
 {
     size_t                     len;
+    u_char                    *p;
+    uintptr_t                  escape;
     ngx_buf_t                 *b;
     ngx_int_t                  rc;
     ngx_uint_t                 n;
@@ -1071,9 +1036,28 @@ ngx_http_dav_ext_propfind_response(ngx_http_request_t *r, ngx_array_t *entries)
     static u_char tail[] = 
         "</D:multistatus>\n";
 
-    len = sizeof(head) - 1 + sizeof(tail) - 1;
-
     entry = entries->elts;
+
+    for (n = 0; n < entries->nelts; n++) {
+        escape = 2 * ngx_escape_uri(NULL, entry[n].uri.data, entry[n].uri.len,
+                                    NGX_ESCAPE_URI);
+        if (escape == 0) {
+            continue;
+        }
+
+        p = ngx_pnalloc(r->pool, entry[n].uri.len + escape);
+        if (p == NULL) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        entry[n].uri.len = (u_char *) ngx_escape_uri(p, entry[n].uri.data,
+                                                     entry[n].uri.len,
+                                                     NGX_ESCAPE_URI)
+                           - p;
+        entry[n].uri.data = p;
+    }
+
+    len = sizeof(head) - 1 + sizeof(tail) - 1;
 
     for (n = 0; n < entries->nelts; n++) {
         len += ngx_http_dav_ext_format_propfind(r, NULL, &entry[n]);
