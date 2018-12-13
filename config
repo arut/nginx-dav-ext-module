@@ -1,25 +1,17 @@
 ngx_addon_name=ngx_http_dav_ext_module
 
-if [ -f auto/module ] ; then
+ngx_module_type=HTTP
+ngx_module_name=ngx_http_dav_ext_module
 
-    ngx_module_type=HTTP
-    ngx_module_name=ngx_http_dav_ext_module
+# nginx has robust builtin support for linking against
+# libxml2+libxslt.  This is definitelty the right way to go if
+# building nginx with the xslt module, in which case libxslt will
+# be linked anyway.  In other cases libxslt is just redundant.
+# If that's a big deal, libxml2 can be linked directly:
+# ngx_module_libs=-lxml2
 
-    # nginx has robust builtin support for building modules against
-    # libxml2+libxslt.  This is definitelty the right way to go if
-    # building nginx with the xslt module, in which case libxslt will
-    # be linked anyway.  In other cases libxslt is just redundant.
-    # If that's a big deal, libxml2 can be linked directly:
-    # ngx_module_libs=-lxml2
+ngx_module_libs=LIBXSLT
 
-    ngx_module_libs=LIBXSLT
+ngx_module_srcs="$ngx_addon_dir/ngx_http_dav_ext_module.c"
 
-    ngx_module_srcs="$ngx_addon_dir/ngx_http_dav_ext_module.c"
-
-    . auto/module
-
-else
-    HTTP_MODULES="$HTTP_MODULES ngx_http_dav_ext_module"
-    NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_http_dav_ext_module.c"
-    CORE_LIBS="$CORE_LIBS -lxml2"
-fi
+. auto/module
