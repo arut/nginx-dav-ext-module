@@ -740,19 +740,16 @@ ngx_http_dav_ext_propfind_xml_end(void *data, const xmlChar *localname,
 static ngx_int_t
 ngx_http_dav_ext_propfind(ngx_http_request_t *r)
 {
-    size_t                        root, allocated;
-    u_char                       *p, *last, *filename;
-    ngx_int_t                     rc;
-    ngx_err_t                     err;
-    ngx_str_t                     path, name;
-    ngx_dir_t                     dir;
-    ngx_uint_t                    depth;
-    ngx_array_t                   entries;
-    ngx_file_info_t               fi;
-    ngx_http_dav_ext_entry_t     *entry;
-    ngx_http_dav_ext_loc_conf_t  *dlcf;
-
-    dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
+    size_t                     root, allocated;
+    u_char                    *p, *last, *filename;
+    ngx_int_t                  rc;
+    ngx_err_t                  err;
+    ngx_str_t                  path, name;
+    ngx_dir_t                  dir;
+    ngx_uint_t                 depth;
+    ngx_array_t                entries;
+    ngx_file_info_t            fi;
+    ngx_http_dav_ext_entry_t  *entry;
 
     if (ngx_array_init(&entries, r->pool, 40, sizeof(ngx_http_dav_ext_entry_t))
         != NGX_OK)
