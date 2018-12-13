@@ -372,7 +372,6 @@ ngx_http_dav_ext_lock_lookup(ngx_http_request_t *r,
     ngx_http_dav_ext_lock_t *lock, ngx_str_t *uri, ngx_int_t depth)
 {
     time_t                    now;
-    u_char                   *p;
     ngx_queue_t              *q;
     ngx_http_dav_ext_node_t  *node;
 
@@ -413,12 +412,11 @@ ngx_http_dav_ext_lock_lookup(ngx_http_request_t *r,
                     continue;
                 }
 
-                if (!node->infinite) {
-                    p = ngx_strlchr(uri->data + node->len, uri->data + uri->len,
-                                    '/');
-                    if (p && p != uri->data + uri->len - 1) {
-                        continue;
-                    }
+                if (!node->infinite
+                    && ngx_strlchr(uri->data + node->len,
+                                   uri->data + uri->len - 1, '/'))
+                {
+                    continue;
                 }
             }
 
@@ -440,12 +438,11 @@ ngx_http_dav_ext_lock_lookup(ngx_http_request_t *r,
                 continue;
             }
 
-            if (depth == 0) {
-                p = ngx_strlchr(node->data + uri->len, node->data + node->len,
-                                '/');
-                if (p && p != node->data + node->len - 1) {
-                    continue;
-                }
+            if (depth == 0
+                && ngx_strlchr(node->data + uri->len,
+                               node->data + node->len - 1, '/'))
+            {
+                continue;
             }
 
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
