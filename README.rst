@@ -38,7 +38,13 @@ Requirements
 ============
 
 - nginx_ version >= 1.13.4
-- ``libexpat-dev``
+- ``libxml2``+``libxslt``
+
+The ``libxslt`` library is technically redundant and is only required since this
+combination is supported by nginx_ for the nginx libxslt module.
+Using builting nginx mechanisms for linking against third-party libraries
+brings certain compatibility benefits.
+However this redundancy can be easily eliminated in the ``config`` file.
 
 
 Locking
