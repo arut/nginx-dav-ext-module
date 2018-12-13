@@ -7,7 +7,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-#include <expat.h>
+#include <libxml/parser.h>
 
 
 #define NGX_HTTP_DAV_EXT_OFF                      2
@@ -88,9 +88,11 @@ static ngx_int_t ngx_http_dav_ext_verify_lock(ngx_http_request_t *r,
 static ngx_int_t ngx_http_dav_ext_content_handler(ngx_http_request_t *r);
 static void ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r);
 static void ngx_http_dav_ext_propfind_xml_start(void *data,
-    const XML_Char *name, const XML_Char **atts);
-static void ngx_http_dav_ext_propfind_xml_end(void *data, const XML_Char *name);
-static int ngx_http_dav_ext_xmlcmp(const char *xname, const char *sname);
+    const xmlChar *localname, const xmlChar *prefix, const xmlChar *uri,
+    int nb_namespaces, const xmlChar **namespaces, int nb_attributes,
+    int nb_defaulted, const xmlChar **attributes);
+static void ngx_http_dav_ext_propfind_xml_end(void *data,
+    const xmlChar *localname, const xmlChar *prefix, const xmlChar *uri);
 static ngx_int_t ngx_http_dav_ext_propfind(ngx_http_request_t *r);
 static ngx_int_t ngx_http_dav_ext_set_locks(ngx_http_request_t *r,
     ngx_str_t *uri, ngx_http_dav_ext_entry_t *entry);
@@ -529,8 +531,9 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 {
     off_t                    len;
     ngx_buf_t               *b;
-    XML_Parser               parser;
     ngx_chain_t             *cl;
+    xmlSAXHandler            sax;
+    xmlParserCtxtPtr         pctx;
     ngx_http_dav_ext_ctx_t  *ctx;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -544,18 +547,19 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 
     ngx_http_set_ctx(r, ctx, ngx_http_dav_ext_module);
 
-    parser = XML_ParserCreate(NULL);
-    if (parser == NULL) {
+    ngx_memzero(&sax, sizeof(xmlSAXHandler));
+
+    sax.initialized = XML_SAX2_MAGIC;
+    sax.startElementNs = ngx_http_dav_ext_propfind_xml_start;
+    sax.endElementNs = ngx_http_dav_ext_propfind_xml_end;
+
+    pctx = xmlCreatePushParserCtxt(&sax, ctx, NULL, 0, NULL);
+    if (pctx == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "XML_ParserCreate() failed");
+                      "xmlCreatePushParserCtxt() failed");
         ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
     }
-
-    XML_SetUserData(parser, ctx);
-
-    XML_SetElementHandler(parser, ngx_http_dav_ext_propfind_xml_start,
-                          ngx_http_dav_ext_propfind_xml_end);
 
     len = 0;
 
@@ -563,7 +567,7 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
         b = cl->buf;
 
         if (b->in_file) {
-            XML_ParserFree(parser);
+            xmlFreeParserCtxt(pctx);
 
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "PROPFIND client body is in file, "
@@ -579,20 +583,20 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 
         len += b->last - b->pos;
 
-        if (!XML_Parse(parser, (const char*) b->pos, b->last - b->pos,
-                       b->last_buf))
+        if (xmlParseChunk(pctx, (const char *) b->pos, b->last - b->pos,
+                          b->last_buf))
         {
-            XML_ParserFree(parser);
+            xmlFreeParserCtxt(pctx);
 
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "XML_Parse() failed");
+                          "xmlParseChunk() failed");
 
             ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
             return;
         }
     }
 
-    XML_ParserFree(parser);
+    xmlFreeParserCtxt(pctx);
 
     if (len == 0) {
         /*
@@ -608,58 +612,61 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
 
 
 static void
-ngx_http_dav_ext_propfind_xml_start(void *data, const XML_Char *name,
-    const XML_Char **atts)
+ngx_http_dav_ext_propfind_xml_start(void *data, const xmlChar *localname,
+    const xmlChar *prefix, const xmlChar *uri, int nb_namespaces,
+    const xmlChar **namespaces, int nb_attributes, int nb_defaulted,
+    const xmlChar **attributes)
 {
     ngx_http_dav_ext_ctx_t *ctx = data;
 
-    if (ngx_http_dav_ext_xmlcmp(name, "propfind") == 0) {
+    if (ngx_strcmp(localname, "propfind") == 0) {
         ctx->nodes ^= NGX_HTTP_DAV_EXT_NODE_PROPFIND;
     }
 
-    if (ngx_http_dav_ext_xmlcmp(name, "prop") == 0) {
+    if (ngx_strcmp(localname, "prop") == 0) {
         ctx->nodes ^= NGX_HTTP_DAV_EXT_NODE_PROP;
     }
 
-    if (ngx_http_dav_ext_xmlcmp(name, "propname") == 0) {
+    if (ngx_strcmp(localname, "propname") == 0) {
         ctx->nodes ^= NGX_HTTP_DAV_EXT_NODE_PROPNAME;
     }
 
-    if (ngx_http_dav_ext_xmlcmp(name, "allprop") == 0) {
+    if (ngx_strcmp(localname, "allprop") == 0) {
         ctx->nodes ^= NGX_HTTP_DAV_EXT_NODE_ALLPROP;
     }
 }
 
 
 static void
-ngx_http_dav_ext_propfind_xml_end(void *data, const XML_Char *name)
+ngx_http_dav_ext_propfind_xml_end(void *data, const xmlChar *localname,
+    const xmlChar *prefix, const xmlChar *uri)
 {
     ngx_http_dav_ext_ctx_t *ctx = data;
 
     if (ctx->nodes & NGX_HTTP_DAV_EXT_NODE_PROPFIND) {
 
         if (ctx->nodes & NGX_HTTP_DAV_EXT_NODE_PROP) {
-            if (ngx_http_dav_ext_xmlcmp(name, "displayname") == 0) {
+            if (ngx_strcmp(localname, "displayname") == 0) {
                 ctx->props |= NGX_HTTP_DAV_EXT_PROP_DISPLAYNAME;
             }
 
-            if (ngx_http_dav_ext_xmlcmp(name, "getcontentlength") == 0) {
+            if (ngx_strcmp(localname, "getcontentlength") == 0) {
                 ctx->props |= NGX_HTTP_DAV_EXT_PROP_GETCONTENTLENGTH;
             }
 
-            if (ngx_http_dav_ext_xmlcmp(name, "getlastmodified") == 0) {
+            if (ngx_strcmp(localname, "getlastmodified") == 0) {
                 ctx->props |= NGX_HTTP_DAV_EXT_PROP_GETLASTMODIFIED;
             }
 
-            if (ngx_http_dav_ext_xmlcmp(name, "resourcetype") == 0) {
+            if (ngx_strcmp(localname, "resourcetype") == 0) {
                 ctx->props |= NGX_HTTP_DAV_EXT_PROP_RESOURCETYPE;
             }
 
-            if (ngx_http_dav_ext_xmlcmp(name, "lockdiscovery") == 0) {
+            if (ngx_strcmp(localname, "lockdiscovery") == 0) {
                 ctx->props |= NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY;
             }
 
-            if (ngx_http_dav_ext_xmlcmp(name, "supportedlock") == 0) {
+            if (ngx_strcmp(localname, "supportedlock") == 0) {
                 ctx->props |= NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK;
             }
         }
@@ -673,18 +680,8 @@ ngx_http_dav_ext_propfind_xml_end(void *data, const XML_Char *name)
         }
     }
 
-    ngx_http_dav_ext_propfind_xml_start(data, name, NULL);
-}
-
-
-static int
-ngx_http_dav_ext_xmlcmp(const char *xname, const char *sname)
-{
-    char  *c;
-
-    c = strrchr(xname, ':');
-
-    return strcmp(c ? c + 1 : xname, sname);
+    ngx_http_dav_ext_propfind_xml_start(data, localname, prefix, uri,
+                                        0, NULL, 0, 0, NULL);
 }
 
 
