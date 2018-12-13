@@ -50,16 +50,7 @@ However this redundancy can be easily eliminated in the ``config`` file.
 Locking
 =======
 
-Locking model implemented in the module is subject to the following limitations:
-
-- Only single-token ``If`` headers are currently supported::
-
-    If: (<urn:TOKEN>)
-    If: <TAG> (<urn:TOKEN>)
-
-  The condition is not evaluated to make a request conditional.
-  It is only used to indicate the client's knowledge of the lock token.
-  See `RFC4918 If Header`_ for syntax details.
+Locking model implemented in the module is subject to the following limitation:
 
 - All currently held locks are kept in a list.
   Checking if an object is constrained by a lock requires O(n) operations.
