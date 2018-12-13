@@ -42,7 +42,7 @@ Requirements
 
 The ``libxslt`` library is technically redundant and is only required since this
 combination is supported by nginx_ for the nginx xslt module.
-Using builting nginx mechanisms for linking against third-party libraries
+Using builtin nginx mechanisms for linking against third-party libraries
 brings certain compatibility benefits.
 However this redundancy can be easily eliminated in the ``config`` file.
 
