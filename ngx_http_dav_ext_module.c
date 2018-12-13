@@ -743,15 +743,13 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
     ngx_err_t                     err;
     ngx_str_t                     path, name, uri;
     ngx_dir_t                     dir;
-    ngx_uint_t                    depth, lock_supported;
+    ngx_uint_t                    depth;
     ngx_array_t                   entries;
     ngx_file_info_t               fi;
     ngx_http_dav_ext_entry_t     *entry;
     ngx_http_dav_ext_loc_conf_t  *dlcf;
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
-
-    lock_supported = dlcf->shm_zone ? 1 : 0;
 
     if (ngx_array_init(&entries, r->pool, 40, sizeof(ngx_http_dav_ext_entry_t))
         != NGX_OK)
@@ -860,7 +858,6 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
     entry->dir = ngx_is_dir(&fi);
     entry->mtime = ngx_file_mtime(&fi);
     entry->size = ngx_file_size(&fi);
-    entry->lock_supported = lock_supported;
 
     if (ngx_http_dav_ext_set_locks(r, &r->uri, entry) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -983,7 +980,6 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r)
         entry->dir = ngx_de_is_dir(&dir);
         entry->mtime = ngx_de_mtime(&dir);
         entry->size = ngx_de_size(&dir);
-        entry->lock_supported = lock_supported;
 
         /*
          * XXX
@@ -1022,8 +1018,11 @@ ngx_http_dav_ext_set_locks(ngx_http_request_t *r, ngx_str_t *uri,
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
 
     if (dlcf->shm_zone == NULL) {
+        entry->lock_supported = 0;
         return NGX_OK;
     }
+
+    entry->lock_supported = 1;
 
     lock = dlcf->shm_zone->data;
 
@@ -1039,7 +1038,6 @@ ngx_http_dav_ext_set_locks(ngx_http_request_t *r, ngx_str_t *uri,
     entry->lock_infinite = node->infinite ? 1 : 0;
     entry->lock_expire = node->expire;
     entry->lock_token = node->token;
-    entry->lock_root.len = node->len;
 
     entry->lock_root.data = ngx_pnalloc(r->pool, node->len);
     if (entry->lock_root.data == NULL) {
@@ -1048,6 +1046,7 @@ ngx_http_dav_ext_set_locks(ngx_http_request_t *r, ngx_str_t *uri,
     }
 
     ngx_memcpy(entry->lock_root.data, node->data, node->len);
+    entry->lock_root.len = node->len;
 
     ngx_shmtx_unlock(&lock->shpool->mutex);
 
