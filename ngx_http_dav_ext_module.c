@@ -630,7 +630,7 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "xmlParseChunk() failed");
             xmlFreeParserCtxt(pctx);
-            ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+            ngx_http_finalize_request(r, NGX_HTTP_BAD_REQUEST);
             return;
         }
     }
