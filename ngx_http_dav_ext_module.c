@@ -937,7 +937,8 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
         entry->size = ngx_de_size(&dir);
 
         if (ngx_http_dav_ext_set_locks(r, entry) != NGX_OK) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
+            break;
         }
 
         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
