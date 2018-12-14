@@ -610,12 +610,10 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
         b = cl->buf;
 
         if (b->in_file) {
-            xmlFreeParserCtxt(pctx);
-
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "PROPFIND client body is in file, "
                           "you may want to increase client_body_buffer_size");
-
+            xmlFreeParserCtxt(pctx);
             ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
             return;
         }
@@ -629,11 +627,9 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
         if (xmlParseChunk(pctx, (const char *) b->pos, b->last - b->pos,
                           b->last_buf))
         {
-            xmlFreeParserCtxt(pctx);
-
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "xmlParseChunk() failed");
-
+            xmlFreeParserCtxt(pctx);
             ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
             return;
         }
