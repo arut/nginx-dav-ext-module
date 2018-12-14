@@ -50,7 +50,8 @@ However this redundancy can be easily eliminated in the ``config`` file.
 Locking
 =======
 
-Locking model implemented in the module is subject to the following limitation:
+- Only exclusive write locks are supported, which is the only type of locks
+  described in the WebDAV_ specification.
 
 - All currently held locks are kept in a list.
   Checking if an object is constrained by a lock requires O(n) operations.
@@ -104,7 +105,7 @@ in the ``dav_ext_methods``.
 Testing
 =======
 
-The module tests require standard nginx-tests_ and Perl HTTP::DAV library.
+The module tests require standard nginx-tests_ and Perl ``HTTP::DAV`` library.
 
 .. code-block:: bash
 
