@@ -106,6 +106,7 @@ is($content, 'bar', 'copy lock');
 
 $d->unlock('/foo');
 $d2->copy('/foo', '/d/bar');
+$content = '';
 $d2->get('/d/bar', \$content);
 isnt($content, 'bar', 'prevent copy lock');
 
