@@ -22,7 +22,7 @@ use HTTP::DAV
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http dav/)->plan(9);
+my $t = Test::Nginx->new()->has(qw/http dav/)->plan(13);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -58,56 +58,58 @@ $t->run();
 
 ###############################################################################
 
-my $d;
-my $url;
-my $p;
+my $url = "http://127.0.0.1:8080";
 
-$url = "http://127.0.0.1:8080";
-
-$d = HTTP::DAV->new();
-$d->open($url) or die("Couldn't open $url: " .$d->message . "\n");
-
-$p = $d->propfind('/', 1);
-
-#printf $p->as_string();
-
-is($p->is_collection, 1, 'propfind root collection');
-is($p->get_property('displayname'), '/', 'propfind root displayname');
-is($p->get_uri(), 'http://127.0.0.1:8080/', 'propfind root uri');
-
-my $foo;
-
-foreach my $r ($p->get_resourcelist()->get_resources()) {
-    if ($r->get_uri() eq 'http://127.0.0.1:8080/foo') {
-        $foo = $r;
-    }
-}
-
-isnt($foo, undef, 'propfind returns file');
-is($foo->is_collection, 0, 'propfind file collection');
-is($foo->get_property('displayname'), 'foo', 'propfind file displayname');
-is($foo->get_property('getcontentlength'), '3', 'propfind file size');
-
-my $d2;
 my $content;
 
-$d2 = HTTP::DAV->new();
-$d2->open($url) or die("Couldn't open $url: " .$d2->message . "\n");
-$d->lock('/foo') or die ("Couldn't lock: " .$d->message . "\n");
+my $d = HTTP::DAV->new();
+$d->open($url);
+
+my $p = $d->propfind('/', 1);
+is($p->is_collection, 1, 'propfind dir collection');
+is($p->get_property('displayname'), '/', 'propfind dir displayname');
+is($p->get_uri(), 'http://127.0.0.1:8080/', 'propfind dir uri');
+
+$p = $d->propfind('/foo');
+is($p->is_collection, 0, 'propfind file collection');
+is($p->get_property('displayname'), 'foo', 'propfind file displayname');
+is($p->get_uri(), 'http://127.0.0.1:8080/foo', 'propfind file uri');
+is($p->get_property('getcontentlength'), '3', 'propfind file size');
+
+my $d2 = HTTP::DAV->new();
+$d2->open($url);
+
+$d->lock('/foo');
+is($d->lock('/foo'), 0, 'prevent double lock');
+
+$d->unlock('/foo');
+is($d->lock('/foo'), 1, 'relock');
 
 $content = "bar";
 $d->put(\$content, '/foo');
+$content = '';
 $d->get('/foo', \$content);
-
-is ($content, 'bar', 'put to locked');
+is($content, 'bar', 'put lock');
 
 $content = "qux";
 $d2->put(\$content, '/foo');
+$content = '';
 $d2->get('/foo', \$content);
+isnt($content, 'qux', 'prevent put lock');
 
-isnt ($content, 'qux', 'put to locked by another client');
+$d->mkcol('/d');
+$d->lock('/d/');
+$d->copy('/foo', '/d/foo');
+$content = '';
+$d->get('/d/foo', \$content);
+is($content, 'bar', 'copy lock');
 
 $d->unlock('/foo');
+$d2->copy('/foo', '/d/bar');
+$d2->get('/d/bar', \$content);
+isnt($content, 'bar', 'prevent copy lock');
+
+$d->unlock('/d');
 
 
 ###############################################################################
