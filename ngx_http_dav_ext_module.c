@@ -36,14 +36,13 @@ typedef struct {
     time_t                       mtime;
     off_t                        size;
 
-    unsigned                     dir:1;
-    unsigned                     lock_supported:1;
-    unsigned                     lock_infinite:1;
-
     time_t                       lock_expire;
     ngx_str_t                    lock_root;
     uint32_t                     lock_token;
 
+    unsigned                     dir:1;
+    unsigned                     lock_supported:1;
+    unsigned                     lock_infinite:1;
 } ngx_http_dav_ext_entry_t;
 
 
@@ -294,7 +293,7 @@ ngx_http_dav_ext_strip_uri(ngx_http_request_t *r, ngx_str_t *uri)
     for (p = host + len; p != last; p++) {
         if (*p == '/') {
             ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "http dav_ext strip uri \"%V\" new:\"%*s\"",
+                           "http dav_ext strip uri \"%V\" \"%*s\"",
                            uri, last - p, p);
 
             uri->data = p;
@@ -328,13 +327,11 @@ ngx_http_dav_ext_verify_lock(ngx_http_request_t *r, ngx_str_t *uri,
     token = ngx_http_dav_ext_if(r, uri);
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
-
     lock = dlcf->shm_zone->data;
 
     ngx_shmtx_lock(&lock->shpool->mutex);
 
     node = ngx_http_dav_ext_lock_lookup(r, lock, uri, -1);
-
     if (node == NULL) {
         ngx_shmtx_unlock(&lock->shpool->mutex);
         return NGX_OK;
@@ -645,6 +642,7 @@ ngx_http_dav_ext_propfind_handler(ngx_http_request_t *r)
     xmlFreeParserCtxt(pctx);
 
     if (len == 0) {
+
         /*
          * For easier debugging treat bodiless requests
          * as if they expect all properties.
@@ -926,8 +924,8 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
         }
 
         entry->uri.data = p;
-        p = ngx_cpymem(p, r->uri.data, r->uri.len);
 
+        p = ngx_cpymem(p, r->uri.data, r->uri.len);
         if (r->uri.len && r->uri.data[r->uri.len - 1] != '/') {
             *p++ = '/';
         }
@@ -938,7 +936,6 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
         }
 
         entry->uri.len = p - entry->uri.data;
-
         entry->dir = ngx_de_is_dir(&dir);
         entry->mtime = ngx_de_mtime(&dir);
         entry->size = ngx_de_size(&dir);
@@ -987,7 +984,6 @@ ngx_http_dav_ext_set_locks(ngx_http_request_t *r,
     ngx_shmtx_lock(&lock->shpool->mutex);
 
     node = ngx_http_dav_ext_lock_lookup(r, lock, &entry->uri, -1);
-
     if (node == NULL) {
         ngx_shmtx_unlock(&lock->shpool->mutex);
         return NGX_OK;
@@ -1121,7 +1117,6 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     }
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
-
     lock = dlcf->shm_zone->data;
 
     /*
@@ -1289,10 +1284,8 @@ ngx_http_dav_ext_lock_response(ngx_http_request_t *r, ngx_uint_t status,
     }
 
     b->last = ngx_cpymem(b->last, head, sizeof(head) - 1);
-
     b->last = (u_char *) ngx_http_dav_ext_format_lockdiscovery(r, b->last,
                                                                &entry);
-
     b->last = ngx_cpymem(b->last, tail, sizeof(tail) - 1);
 
     b->last_buf = (r == r->main) ? 1 : 0;
@@ -1302,7 +1295,6 @@ ngx_http_dav_ext_lock_response(ngx_http_request_t *r, ngx_uint_t status,
     cl.next = NULL;
 
     r->headers_out.status = status;
-
     r->headers_out.content_length_n = b->last - b->pos;
 
     r->headers_out.content_type_len = sizeof("text/xml") - 1;
@@ -1311,17 +1303,17 @@ ngx_http_dav_ext_lock_response(ngx_http_request_t *r, ngx_uint_t status,
 
     ngx_str_set(&r->headers_out.charset, "utf-8");
 
-    p = ngx_pnalloc(r->pool, ngx_http_dav_ext_format_token(NULL, token, 1));
-    if (p == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
     h = ngx_list_push(&r->headers_out.headers);
     if (h == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     ngx_str_set(&h->key, "Lock-Token");
+
+    p = ngx_pnalloc(r->pool, ngx_http_dav_ext_format_token(NULL, token, 1));
+    if (p == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
 
     h->value.data = p;
     h->value.len = (u_char *) ngx_http_dav_ext_format_token(p, token, 1) - p;
@@ -1348,7 +1340,6 @@ ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
     token = ngx_http_dav_ext_lock_token(r);
 
     dlcf = ngx_http_get_module_loc_conf(r, ngx_http_dav_ext_module);
-
     lock = dlcf->shm_zone->data;
 
     ngx_shmtx_lock(&lock->shpool->mutex);
@@ -1423,7 +1414,6 @@ ngx_http_dav_ext_lock_token(ngx_http_request_t *r)
     static ngx_str_t name = ngx_string("lock-token");
 
     part = &r->headers_in.headers.part;
-
     header = part->elts;
 
     for (i = 0; /* void */ ; i++) {
@@ -1505,7 +1495,6 @@ ngx_http_dav_ext_if(ngx_http_request_t *r, ngx_str_t *uri)
                    "http dav_ext if \"%V\"", uri);
 
     part = &r->headers_in.headers.part;
-
     header = part->elts;
 
     for (i = 0; /* void */ ; i++) {
@@ -1538,11 +1527,9 @@ ngx_http_dav_ext_if(ngx_http_request_t *r, ngx_str_t *uri)
 
         if (n == name.len && n == header[i].key.len) {
             p = header[i].value.data;
-
             tag = r->uri;
 
             while (*p != '\0') {
-
                 ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                                "http dav_ext if list \"%s\"", p);
 
@@ -1594,7 +1581,6 @@ ngx_http_dav_ext_if(ngx_http_request_t *r, ngx_str_t *uri)
                 }
 
                 for ( ;; ) {
-
                     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                                    "http dav_ext if condition \"%s\"", p);
 
@@ -1644,7 +1630,6 @@ ngx_http_dav_ext_if(ngx_http_request_t *r, ngx_str_t *uri)
                 next:
 
                     while (*p != '\0' && *p != ' ' && *p != ')') { p++; }
-
                     while (*p == ' ') { p++; }
 
                     if (*p == '\0') {
