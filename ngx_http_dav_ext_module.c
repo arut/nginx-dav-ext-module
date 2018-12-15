@@ -339,7 +339,6 @@ ngx_http_dav_ext_verify_lock(ngx_http_request_t *r, ngx_str_t *uri,
 
     if (token == 0) {
         ngx_shmtx_unlock(&lock->shpool->mutex);
-        /* XXX body? */
         return 423; /* Locked */
     }
 
@@ -1099,7 +1098,7 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     u_char                       *last;
     size_t                        n, root;
     time_t                        now;
-    uint32_t                      token;
+    uint32_t                      token, new_token;
     ngx_fd_t                      fd;
     ngx_int_t                     rc, depth;
     ngx_str_t                     path;
@@ -1139,9 +1138,9 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
 
     token = ngx_http_dav_ext_if(r, &r->uri);
 
-    while (token == 0) {
-        token = ngx_random();
-    }
+    do {
+        new_token = ngx_random();
+    } while (new_token == 0);
 
     now = ngx_time();
 
@@ -1150,9 +1149,14 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     node = ngx_http_dav_ext_lock_lookup(r, lock, &r->uri, depth);
 
     if (node) {
-        if (node->token != token) {
+        if (token == 0) {
             ngx_shmtx_unlock(&lock->shpool->mutex);
             return 423; /* Locked */
+        }
+
+        if (node->token != token) {
+            ngx_shmtx_unlock(&lock->shpool->mutex);
+            return NGX_HTTP_PRECONDITION_FAILED;
         }
 
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -1182,7 +1186,7 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     ngx_memcpy(&node->data, r->uri.data, r->uri.len);
 
     node->len = r->uri.len;
-    node->token = token;
+    node->token = new_token;
     node->expire = now + lock->timeout;
     node->infinite = (depth ? 1 : 0);
 
@@ -1238,7 +1242,7 @@ ngx_http_dav_ext_lock_handler(ngx_http_request_t *r)
     }
 
     return ngx_http_dav_ext_lock_response(r, status, lock->timeout, depth,
-                                          token);
+                                          new_token);
 }
 
 
