@@ -890,6 +890,7 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
                 }
 
                 last = ngx_cpystrn(filename, path.data, path.len + 1);
+                *last++ = '/';
             }
 
             ngx_cpystrn(last, name.data, name.len + 1);
