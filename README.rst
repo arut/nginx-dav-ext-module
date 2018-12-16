@@ -10,7 +10,7 @@ nginx_ WebDAV_ PROPFIND,OPTIONS,LOCK,UNLOCK support.
 About
 =====
 
-Standard nginx_ ngx_http_dav_module_ provides partial WebDAV_ implementation and
+The standard ngx_http_dav_module_ provides partial WebDAV_ implementation and
 only supports GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE methods.
 
 For full WebDAV_ support in nginx_ you need to enable the standard
@@ -41,7 +41,7 @@ Requirements
 - ``libxml2`` + ``libxslt``
 
 The ``libxslt`` library is technically redundant and is only required since this
-combination is supported by nginx_ for the nginx xslt module.
+combination is supported by nginx_ for the xslt module.
 Using builtin nginx mechanisms for linking against third-party libraries
 brings certain compatibility benefits.
 However this redundancy can be easily eliminated in the ``config`` file.
@@ -50,7 +50,7 @@ However this redundancy can be easily eliminated in the ``config`` file.
 Locking
 =======
 
-- Only exclusive write locks are supported, which is the only type of locks
+- Only the exclusive write locks are supported, which is the only type of locks
   described in the WebDAV_ specification.
 
 - All currently held locks are kept in a list.
