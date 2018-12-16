@@ -65,6 +65,9 @@ my $content;
 my $d = HTTP::DAV->new();
 $d->open($url);
 
+my $d2 = HTTP::DAV->new();
+$d2->open($url);
+
 #debug:
 #$d->DebugLevel(3);
 #see /tmp/perldav_debug.txt.
@@ -79,9 +82,6 @@ is($p->is_collection, 0, 'propfind file collection');
 is($p->get_property('displayname'), 'foo', 'propfind file displayname');
 is($p->get_uri(), 'http://127.0.0.1:8080/foo', 'propfind file uri');
 is($p->get_property('getcontentlength'), '3', 'propfind file size');
-
-my $d2 = HTTP::DAV->new();
-$d2->open($url);
 
 $d->lock('/foo');
 is($d->lock('/foo'), 0, 'prevent double lock');
@@ -137,6 +137,5 @@ $content = 'qux';
 $d2->put(\$content, '/d/c/qux');
 $d2->get('/d/c/qux', \$content) or $content = '';
 is($content, 'qux', 'put to a depth-0-locked subdirectory');
-
 
 ###############################################################################
