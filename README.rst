@@ -47,6 +47,18 @@ brings certain compatibility benefits.
 However this redundancy can be easily eliminated in the ``config`` file.
 
 
+Testing
+=======
+
+The module tests require standard nginx-tests_ and Perl ``HTTP::DAV`` library.
+
+.. code-block:: bash
+
+    $ export PERL5LIB=/path/to/nginx-tests/lib
+    $ export TEST_NGINX_BINARY=/path/to/nginx
+    $ prove t
+
+
 Locking
 =======
 
@@ -56,7 +68,8 @@ Locking
 - All currently held locks are kept in a list.
   Checking if an object is constrained by a lock requires O(n) operations.
   A huge number of simultaneously held locks may degrade performance.
-  Thus it is not recommended to have a large lock timeout.
+  Thus it is not recommended to have a large lock timeout which would increase
+  the number of locks.
 
 
 Directives
@@ -100,18 +113,6 @@ This zone must be defined with the ``dav_ext_lock_zone`` directive.
 Note that even though this directive enables locking capabilities in the
 current scope, HTTP methods LOCK and UNLOCK should also be explicitly specified
 in the ``dav_ext_methods``.
-
-
-Testing
-=======
-
-The module tests require standard nginx-tests_ and Perl ``HTTP::DAV`` library.
-
-.. code-block:: bash
-
-    $ export PERL5LIB=/path/to/nginx-tests/lib
-    $ export TEST_NGINX_BINARY=/path/to/nginx
-    $ prove t
 
 
 Example 1
