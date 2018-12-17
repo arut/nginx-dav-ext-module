@@ -1555,7 +1555,9 @@ ngx_http_dav_ext_if(ngx_http_request_t *r, ngx_str_t *uri)
 
                 p++;
 
-                if (tag.len > uri->len
+                if (tag.len == 0
+                    || tag.len > uri->len
+                    || (tag.len < uri->len && tag.data[tag.len - 1] != '/')
                     || ngx_memcmp(tag.data, uri->data, tag.len))
                 {
                     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
