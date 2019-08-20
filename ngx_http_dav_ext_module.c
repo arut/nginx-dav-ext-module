@@ -502,8 +502,16 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
         }
 
         ngx_str_set(&h->key, "DAV");
-        h->value.len = 1;
-        h->value.data = (u_char *) (dlcf->shm_zone ? "2" : "1");
+
+        if (dlcf->shm_zone) {
+            h->value.len = 3;
+           h->value.data = (u_char *) "1,2";
+        } 
+        else {
+           h->value.len = 1;
+           h->value.data = (u_char *) "1";
+        }
+
         h->hash = 1;
 
         h = ngx_list_push(&r->headers_out.headers);
