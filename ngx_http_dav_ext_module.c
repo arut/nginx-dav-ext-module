@@ -896,10 +896,9 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
             ngx_cpystrn(last, name.data, name.len + 1);
 
             if (ngx_de_info(filename, &dir) == NGX_FILE_ERROR) {
-                ngx_log_error(NGX_LOG_CRIT, r->connection->log, ngx_errno,
+                ngx_log_error(NGX_LOG_ERR, r->connection->log, ngx_errno,
                               ngx_de_info_n " \"%s\" failed", filename);
-                rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
-                break;
+                continue;
             }
         }
 
