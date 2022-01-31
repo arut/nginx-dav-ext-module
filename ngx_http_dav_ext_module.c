@@ -8,6 +8,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <libxml/parser.h>
+#include "ngx_http_dav_ext_module.h"
 
 
 #define NGX_HTTP_DAV_EXT_OFF                      2
@@ -18,6 +19,7 @@
 #define NGX_HTTP_DAV_EXT_NODE_PROP                0x02
 #define NGX_HTTP_DAV_EXT_NODE_PROPNAME            0x04
 #define NGX_HTTP_DAV_EXT_NODE_ALLPROP             0x08
+#define NGX_HTTP_DAV_EXT_NODE_PROPPATCH           0x10
 
 #define NGX_HTTP_DAV_EXT_PROP_DISPLAYNAME         0x01
 #define NGX_HTTP_DAV_EXT_PROP_GETCONTENTLENGTH    0x02
@@ -134,6 +136,7 @@ static ngx_int_t ngx_http_dav_ext_init(ngx_conf_t *cf);
 static ngx_conf_bitmask_t  ngx_http_dav_ext_methods_mask[] = {
     { ngx_string("off"),      NGX_HTTP_DAV_EXT_OFF },
     { ngx_string("propfind"), NGX_HTTP_PROPFIND    },
+    { ngx_string("proppatch"),NGX_HTTP_PROPPATCH   },
     { ngx_string("options"),  NGX_HTTP_OPTIONS     },
     { ngx_string("lock"),     NGX_HTTP_LOCK        },
     { ngx_string("unlock"),   NGX_HTTP_UNLOCK      },
@@ -485,6 +488,19 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
 
         return NGX_DONE;
 
+    case NGX_HTTP_PROPPATCH:
+
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "http dav_ext proppatch");
+
+        rc = ngx_http_read_client_request_body(r,
+                                            ngx_http_dav_ext_proppatch_handler);
+        if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+            return rc;
+        }
+
+        return NGX_DONE;
+
     case NGX_HTTP_OPTIONS:
 
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -502,8 +518,14 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
         }
 
         ngx_str_set(&h->key, "DAV");
-        h->value.len = 1;
-        h->value.data = (u_char *) (dlcf->shm_zone ? "2" : "1");
+        if ( dlcf->shm_zone ) {
+          h->value.len = 3;
+          h->value.data = (u_char *) "1,2";
+        }
+        else {
+          h->value.len = 1;
+          h->value.data = (u_char *) "1";
+        }
         h->hash = 1;
 
         h = ngx_list_push(&r->headers_out.headers);
@@ -514,7 +536,7 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
         /* XXX */
         ngx_str_set(&h->key, "Allow");
         ngx_str_set(&h->value,
-           "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,PROPFIND,OPTIONS,LOCK,UNLOCK");
+           "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,PROPFIND,OPTIONS,LOCK,UNLOCK,PROPPATCH");
         h->hash = 1;
 
         r->headers_out.status = NGX_HTTP_OK;
@@ -1018,11 +1040,11 @@ ngx_http_dav_ext_propfind_response(ngx_http_request_t *r, ngx_array_t *entries,
     ngx_chain_t                cl;
     ngx_http_dav_ext_entry_t  *entry;
 
-    static u_char head[] = 
+    static u_char head[] =
         "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
         "<D:multistatus xmlns:D=\"DAV:\">\n";
 
-    static u_char tail[] = 
+    static u_char tail[] =
         "</D:multistatus>\n";
 
     entry = entries->elts;
