@@ -25,16 +25,32 @@
 #define NGX_HTTP_DAV_EXT_PROP_RESOURCETYPE        0x08
 #define NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY       0x10
 #define NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK       0x20
+#define NGX_HTTP_DAV_EXT_PROP_CREATIONDATE        0x40
+#define NGX_HTTP_DAV_EXT_PROP_GETUSER             0x80
+#define NGX_HTTP_DAV_EXT_PROP_GETGROUP            0x40
+#define NGX_HTTP_DAV_EXT_PROP_GETMODE             0x100
 
 #define NGX_HTTP_DAV_EXT_PROP_ALL                 0x7f
 #define NGX_HTTP_DAV_EXT_PROP_NAMES               0x80
 
+/* TODO! */
+#define ngx_file_ctime(sb)       (sb)->st_ctime
+#define ngx_file_uid(sb)         (sb)->st_uid
+#define ngx_file_gid(sb)         (sb)->st_gid
+#define ngx_file_mode(sb)        (sb)->st_mode
+
+#define NGX_UNSIGNED_T_LEN NGX_OFF_T_LEN
+#define NGX_OCTAL_T_LEN    NGX_OFF_T_LEN
 
 typedef struct {
     ngx_str_t                    uri;
     ngx_str_t                    name;
     time_t                       mtime;
+    time_t                       ctime;
     off_t                        size;
+    uid_t                        st_uid;
+    gid_t                        st_gid;
+    mode_t                       st_mode;
 
     time_t                       lock_expire;
     ngx_str_t                    lock_root;
@@ -819,7 +835,11 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
     entry->name = name;
     entry->dir = ngx_is_dir(&fi);
     entry->mtime = ngx_file_mtime(&fi);
+    entry->ctime = ngx_file_ctime(&fi);
     entry->size = ngx_file_size(&fi);
+    entry->st_uid = ngx_file_uid(&fi);
+    entry->st_gid = ngx_file_gid(&fi);
+    entry->st_mode = ngx_file_mode(&fi);
 
     if (ngx_http_dav_ext_set_locks(r, entry) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -1659,7 +1679,7 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
     static u_char prop[] =
         "</D:href>\n"
         "<D:propstat>\n"
-        "<D:prop>\n";
+        "<D:prop xmlns:F=\"http://fundatsys.com/dpdrschema/\">\n";
 
     /* properties */
 
@@ -1675,7 +1695,11 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
         "<D:getlastmodified/>\n"
         "<D:resourcetype/>\n"
         "<D:lockdiscovery/>\n"
-        "<D:supportedlock/>\n";
+        "<D:supportedlock/>\n"
+        "<D:creationdate/>\n"
+        "<F:owner_id/>\n"
+        "<F:group_id/>\n"
+        "<F:unix_mode/>\n";
 
     static u_char supportedlock[] =
         "<D:lockentry>\n"
@@ -1710,7 +1734,20 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
                           "</D:resourcetype>\n"
 
                           "<D:supportedlock>\n"
-                          "</D:supportedlock>\n") - 1;
+                          "</D:supportedlock>\n"
+
+                          "<D:creationdate>"
+                          "Mon, 28 Sep 1970 06:00:00 GMT"
+                          "</D:creationdate>\n"
+
+                          "<F:owner_id>\n"
+                          "</F:owner_id>\n"
+
+                          "<F:group_id>\n"
+                          "</F:group_id>\n"
+
+                          "<F:unix_mode>\n"
+                          "</F:unix_mode>\n") - 1;
 
             /* displayname */
             len += entry->name.len
@@ -1726,6 +1763,15 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
             if (entry->lock_supported) {
                 len += sizeof(supportedlock) - 1;
             }
+
+            /* owner_id */
+            len += NGX_UNSIGNED_T_LEN;
+
+            /* group_id */
+            len += NGX_UNSIGNED_T_LEN;
+
+            /* unix_mode */
+            len += NGX_OCTAL_T_LEN;
         }
 
         return len;
@@ -1791,6 +1837,30 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
 
             dst = ngx_cpymem(dst, "</D:supportedlock>\n",
                              sizeof("</D:supportedlock>\n") - 1);
+        }
+
+        if (props & NGX_HTTP_DAV_EXT_PROP_CREATIONDATE) {
+            dst = ngx_cpymem(dst, "<D:creationdate>",
+                             sizeof("<D:creationdate>") - 1);
+            dst = ngx_http_time(dst, entry->ctime);
+            dst = ngx_cpymem(dst, "</D:creationdate>\n",
+                             sizeof("</D:creationdate>\n") - 1);
+        }
+
+        if (props & NGX_HTTP_DAV_EXT_PROP_GETUSER) {
+            dst = ngx_sprintf(dst, "<F:owner_id>%u"
+                              "</F:owner_id>\n", entry->st_uid);
+        }
+
+        if (props & NGX_HTTP_DAV_EXT_PROP_GETGROUP) {
+            dst = ngx_sprintf(dst, "<F:group_id>%u"
+                              "</F:group_id>\n", entry->st_gid);
+        }
+
+        if (props & NGX_HTTP_DAV_EXT_PROP_GETMODE) {
+            /* ngx_sprintf does not support octal format */
+            dst += sprintf((char *)dst, "<F:unix_mode>%o"
+                           "</F:unix_mode>\n", entry->st_mode);
         }
     }
 
