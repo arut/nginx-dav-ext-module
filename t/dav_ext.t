@@ -11,7 +11,6 @@ use strict;
 
 use Test::More;
 use File::Spec;
-use POSIX qw( strftime );
 
 BEGIN { use FindBin; chdir($FindBin::Bin); }
 
@@ -24,7 +23,7 @@ use HTTP::DAV
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http dav/)->plan(24);
+my $t = Test::Nginx->new()->has(qw/http dav/)->plan(23);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -87,7 +86,6 @@ is($p->get_uri(), 'http://127.0.0.1:8080/foo', 'propfind file uri');
 is($p->get_property('getcontentlength'), '3', 'propfind file size');
 is($p->get_property('owner_id'), $foo_stat[4], 'propfind owner id');
 is($p->get_property('group_id'), $foo_stat[5], 'propfind group id');
-is($p->get_property('creationdate'), strftime('%a, %d %b %Y %H:%M:%S GMT', gmtime( $foo_stat[10] )), 'propfind creation time');
 is($p->get_property('unix_mode'), (sprintf "%o",$foo_stat[2]), 'propfind unix mode');
 
 $d->lock('/foo');

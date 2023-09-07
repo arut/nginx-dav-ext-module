@@ -25,16 +25,14 @@
 #define NGX_HTTP_DAV_EXT_PROP_RESOURCETYPE        0x08
 #define NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY       0x10
 #define NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK       0x20
-#define NGX_HTTP_DAV_EXT_PROP_CREATIONDATE        0x40
-#define NGX_HTTP_DAV_EXT_PROP_OWNER_ID            0x80
-#define NGX_HTTP_DAV_EXT_PROP_GROUP_ID            0x100
-#define NGX_HTTP_DAV_EXT_PROP_UNIX_MODE           0x200
+#define NGX_HTTP_DAV_EXT_PROP_OWNER_ID            0x40
+#define NGX_HTTP_DAV_EXT_PROP_GROUP_ID            0x80
+#define NGX_HTTP_DAV_EXT_PROP_UNIX_MODE           0x100
 
-#define NGX_HTTP_DAV_EXT_PROP_ALL                 0x3ff
+#define NGX_HTTP_DAV_EXT_PROP_ALL                 0x1ff
 #define NGX_HTTP_DAV_EXT_PROP_NAMES               0x400
 
 /* TODO! */
-#define ngx_file_ctime(sb)       (sb)->st_ctime
 #define ngx_file_uid(sb)         (sb)->st_uid
 #define ngx_file_gid(sb)         (sb)->st_gid
 #define ngx_file_mode(sb)        (sb)->st_mode
@@ -46,7 +44,6 @@ typedef struct {
     ngx_str_t                    uri;
     ngx_str_t                    name;
     time_t                       mtime;
-    time_t                       ctime;
     off_t                        size;
     uid_t                        st_uid;
     gid_t                        st_gid;
@@ -725,10 +722,6 @@ ngx_http_dav_ext_propfind_xml_end(void *data, const xmlChar *localname,
                 xctx->props |= NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK;
             }
 
-            if (ngx_strcmp(localname, "creationdate") == 0) {
-                xctx->props |= NGX_HTTP_DAV_EXT_PROP_CREATIONDATE;
-            }
-
             if (ngx_strcmp(localname, "owner_id") == 0) {
                 xctx->props |= NGX_HTTP_DAV_EXT_PROP_OWNER_ID;
             }
@@ -851,7 +844,6 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
     entry->name = name;
     entry->dir = ngx_is_dir(&fi);
     entry->mtime = ngx_file_mtime(&fi);
-    entry->ctime = ngx_file_ctime(&fi);
     entry->size = ngx_file_size(&fi);
     entry->st_uid = ngx_file_uid(&fi);
     entry->st_gid = ngx_file_gid(&fi);
@@ -1712,7 +1704,6 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
         "<D:resourcetype/>\n"
         "<D:lockdiscovery/>\n"
         "<D:supportedlock/>\n"
-        "<D:creationdate/>\n"
         "<F:owner_id/>\n"
         "<F:group_id/>\n"
         "<F:unix_mode/>\n";
@@ -1751,10 +1742,6 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
 
                           "<D:supportedlock>\n"
                           "</D:supportedlock>\n"
-
-                          "<D:creationdate>"
-                          "Mon, 28 Sep 1970 06:00:00 GMT"
-                          "</D:creationdate>\n"
 
                           "<F:owner_id>\n"
                           "</F:owner_id>\n"
@@ -1853,14 +1840,6 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
 
             dst = ngx_cpymem(dst, "</D:supportedlock>\n",
                              sizeof("</D:supportedlock>\n") - 1);
-        }
-
-        if (props & NGX_HTTP_DAV_EXT_PROP_CREATIONDATE) {
-            dst = ngx_cpymem(dst, "<D:creationdate>",
-                             sizeof("<D:creationdate>") - 1);
-            dst = ngx_http_time(dst, entry->ctime);
-            dst = ngx_cpymem(dst, "</D:creationdate>\n",
-                             sizeof("</D:creationdate>\n") - 1);
         }
 
         if (props & NGX_HTTP_DAV_EXT_PROP_OWNER_ID) {
