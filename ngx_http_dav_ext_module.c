@@ -26,12 +26,12 @@
 #define NGX_HTTP_DAV_EXT_PROP_LOCKDISCOVERY       0x10
 #define NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK       0x20
 #define NGX_HTTP_DAV_EXT_PROP_CREATIONDATE        0x40
-#define NGX_HTTP_DAV_EXT_PROP_GETUSER             0x80
-#define NGX_HTTP_DAV_EXT_PROP_GETGROUP            0x40
-#define NGX_HTTP_DAV_EXT_PROP_GETMODE             0x100
+#define NGX_HTTP_DAV_EXT_PROP_OWNER_ID            0x80
+#define NGX_HTTP_DAV_EXT_PROP_GROUP_ID            0x100
+#define NGX_HTTP_DAV_EXT_PROP_UNIX_MODE           0x200
 
-#define NGX_HTTP_DAV_EXT_PROP_ALL                 0x7f
-#define NGX_HTTP_DAV_EXT_PROP_NAMES               0x80
+#define NGX_HTTP_DAV_EXT_PROP_ALL                 0x3ff
+#define NGX_HTTP_DAV_EXT_PROP_NAMES               0x400
 
 /* TODO! */
 #define ngx_file_ctime(sb)       (sb)->st_ctime
@@ -723,6 +723,22 @@ ngx_http_dav_ext_propfind_xml_end(void *data, const xmlChar *localname,
 
             if (ngx_strcmp(localname, "supportedlock") == 0) {
                 xctx->props |= NGX_HTTP_DAV_EXT_PROP_SUPPORTEDLOCK;
+            }
+
+            if (ngx_strcmp(localname, "creationdate") == 0) {
+                xctx->props |= NGX_HTTP_DAV_EXT_PROP_CREATIONDATE;
+            }
+
+            if (ngx_strcmp(localname, "owner_id") == 0) {
+                xctx->props |= NGX_HTTP_DAV_EXT_PROP_OWNER_ID;
+            }
+
+            if (ngx_strcmp(localname, "group_id") == 0) {
+                xctx->props |= NGX_HTTP_DAV_EXT_PROP_GROUP_ID;
+            }
+
+            if (ngx_strcmp(localname, "unix_mode") == 0) {
+                xctx->props |= NGX_HTTP_DAV_EXT_PROP_UNIX_MODE;
             }
         }
 
@@ -1847,17 +1863,17 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
                              sizeof("</D:creationdate>\n") - 1);
         }
 
-        if (props & NGX_HTTP_DAV_EXT_PROP_GETUSER) {
-            dst = ngx_sprintf(dst, "<F:owner_id>%u"
+        if (props & NGX_HTTP_DAV_EXT_PROP_OWNER_ID) {
+            dst = ngx_sprintf(dst, "<F:owner_id>%ud"
                               "</F:owner_id>\n", entry->st_uid);
         }
 
-        if (props & NGX_HTTP_DAV_EXT_PROP_GETGROUP) {
-            dst = ngx_sprintf(dst, "<F:group_id>%u"
+        if (props & NGX_HTTP_DAV_EXT_PROP_GROUP_ID) {
+            dst = ngx_sprintf(dst, "<F:group_id>%ud"
                               "</F:group_id>\n", entry->st_gid);
         }
 
-        if (props & NGX_HTTP_DAV_EXT_PROP_GETMODE) {
+        if (props & NGX_HTTP_DAV_EXT_PROP_UNIX_MODE) {
             /* ngx_sprintf does not support octal format */
             dst += sprintf((char *)dst, "<F:unix_mode>%o"
                            "</F:unix_mode>\n", entry->st_mode);
