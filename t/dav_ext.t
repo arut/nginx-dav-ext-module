@@ -10,6 +10,7 @@ use warnings;
 use strict;
 
 use Test::More;
+use File::Spec;
 
 BEGIN { use FindBin; chdir($FindBin::Bin); }
 
@@ -22,7 +23,7 @@ use HTTP::DAV
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http dav/)->plan(20);
+my $t = Test::Nginx->new()->has(qw/http dav/)->plan(23);
 
 $t->write_file_expand('nginx.conf', <<'EOF');
 
@@ -53,10 +54,11 @@ http {
 EOF
 
 $t->write_file('foo', 'foo');
-
 $t->run();
 
 ###############################################################################
+
+my @foo_stat = stat(File::Spec->catfile($t->testdir(), 'foo'));
 
 my $url = "http://127.0.0.1:8080";
 
@@ -82,6 +84,9 @@ is($p->is_collection, 0, 'propfind file collection');
 is($p->get_property('displayname'), 'foo', 'propfind file displayname');
 is($p->get_uri(), 'http://127.0.0.1:8080/foo', 'propfind file uri');
 is($p->get_property('getcontentlength'), '3', 'propfind file size');
+is($p->get_property('owner_id'), $foo_stat[4], 'propfind owner id');
+is($p->get_property('group_id'), $foo_stat[5], 'propfind group id');
+is($p->get_property('unix_mode'), (sprintf "%o",$foo_stat[2]), 'propfind unix mode');
 
 $d->lock('/foo');
 is($d->lock('/foo'), 0, 'prevent double lock');
