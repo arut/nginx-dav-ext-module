@@ -37,6 +37,10 @@
 #define ngx_file_gid(sb)         (sb)->st_gid
 #define ngx_file_mode(sb)        (sb)->st_mode
 
+#define ngx_de_uid(dir)         (dir)->info.st_uid
+#define ngx_de_gid(dir)         (dir)->info.st_gid
+#define ngx_de_mode(dir)        (dir)->info.st_mode
+
 #define NGX_UNSIGNED_T_LEN NGX_OFF_T_LEN
 #define NGX_OCTAL_T_LEN    NGX_OFF_T_LEN
 
@@ -963,6 +967,9 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
         entry->dir = ngx_de_is_dir(&dir);
         entry->mtime = ngx_de_mtime(&dir);
         entry->size = ngx_de_size(&dir);
+        entry->st_uid = ngx_de_uid(&dir);
+        entry->st_gid = ngx_de_gid(&dir);
+        entry->st_mode = ngx_de_mode(&dir);
 
         if (ngx_http_dav_ext_set_locks(r, entry) != NGX_OK) {
             rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
