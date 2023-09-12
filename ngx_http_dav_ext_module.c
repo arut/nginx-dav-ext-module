@@ -1694,7 +1694,7 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
     static u_char prop[] =
         "</D:href>\n"
         "<D:propstat>\n"
-        "<D:prop xmlns:F=\"http://fundatsys.com/dpdrschema/\">\n";
+        "<D:prop xmlns:F=\"http://instavia.com/schema/unix/\">\n";
 
     /* properties */
 
@@ -1861,7 +1861,7 @@ ngx_http_dav_ext_format_propfind(ngx_http_request_t *r, u_char *dst,
 
         if (props & NGX_HTTP_DAV_EXT_PROP_UNIX_MODE) {
             /* ngx_sprintf does not support octal format */
-            dst += sprintf((char *)dst, "<F:unix_mode>%o"
+            dst += sprintf((char *)dst, "<F:unix_mode>0%o"
                            "</F:unix_mode>\n", entry->st_mode);
         }
     }
