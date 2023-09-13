@@ -86,7 +86,7 @@ is($p->get_uri(), 'http://127.0.0.1:8080/foo', 'propfind file uri');
 is($p->get_property('getcontentlength'), '3', 'propfind file size');
 is($p->get_property('owner_id'), $foo_stat[4], 'propfind owner id');
 is($p->get_property('group_id'), $foo_stat[5], 'propfind group id');
-is($p->get_property('unix_mode'), (sprintf "%o",$foo_stat[2]), 'propfind unix mode');
+is($p->get_property('unix_mode'), (sprintf "0%o",$foo_stat[2]), 'propfind unix mode');
 
 $d->lock('/foo');
 is($d->lock('/foo'), 0, 'prevent double lock');
