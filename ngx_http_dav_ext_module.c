@@ -33,6 +33,7 @@
 #define NGX_HTTP_DAV_EXT_PROP_NAMES               0x400
 
 /* TODO! */
+#define HAVE_LINUX_XATTRS
 #define ngx_file_uid(sb)         (sb)->st_uid
 #define ngx_file_gid(sb)         (sb)->st_gid
 #define ngx_file_mode(sb)        (sb)->st_mode
@@ -40,6 +41,18 @@
 #define ngx_de_uid(dir)         (dir)->info.st_uid
 #define ngx_de_gid(dir)         (dir)->info.st_gid
 #define ngx_de_mode(dir)        (dir)->info.st_mode
+
+#ifdef HAVE_LINUX_XATTRS
+#include <sys/types.h>
+#include <attr/xattr.h>
+
+#define USER_PREFIX "user."
+
+#define RSYNC_PREFIX "rsync."
+
+#define XSTAT_SUFFIX "stat"
+#define XSTAT_ATTR USER_PREFIX RSYNC_PREFIX "%" XSTAT_SUFFIX
+#endif
 
 #define NGX_UNSIGNED_T_LEN NGX_OFF_T_LEN
 #define NGX_OCTAL_T_LEN    NGX_OFF_T_LEN
@@ -752,6 +765,51 @@ ngx_http_dav_ext_propfind_xml_end(void *data, const xmlChar *localname,
                                         0, NULL, 0, 0, NULL);
 }
 
+#ifdef HAVE_LINUX_XATTRS
+static ngx_int_t
+ngx_http_dav_get_xattr(ngx_http_request_t *r, u_char *path, ngx_http_dav_ext_entry_t *entry)
+{
+    ssize_t                   xrc;
+    char                      xattr_buf[256];
+    void                      *xattr_ptr = xattr_buf;
+    unsigned int              mode;
+    int                       rdev_major, rdev_minor, uid, gid;
+
+    xrc = lgetxattr((const char*)path, XSTAT_ATTR, xattr_buf, sizeof(xattr_buf));
+    if (xrc == -1) {
+        if (errno == ERANGE) {
+            xrc = lgetxattr((const char*)path, XSTAT_ATTR, xattr_ptr, 0);
+            xattr_ptr = ngx_pnalloc(r->pool, xrc);
+            if (xattr_ptr == NULL) {
+                ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno,
+                              ngx_de_info_n " \"%s\" failed: no memory", path);
+                return NGX_ERROR;
+            }
+            xrc = lgetxattr((const char*)path, XSTAT_ATTR, xattr_ptr, xrc);
+        }
+    }
+
+    if (xrc == -1) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, ngx_errno,
+                      ngx_de_info_n " \"%s\" rsync xattrs failed", path);
+        return NGX_ERROR;
+    }
+
+    if (sscanf(xattr_ptr, "%o %d,%d %d:%d",
+               &mode, &rdev_major, &rdev_minor, &uid, &gid) != 5) {
+        ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno,
+                      ngx_de_info_n " \"%s\" corrupt \"%s\" xattrs attached: %s", path, XSTAT_ATTR,
+                      xattr_ptr);
+        return NGX_ERROR;
+    }
+
+    entry->st_uid = uid;
+    entry->st_gid = gid;
+    entry->st_mode = mode;
+
+    return NGX_OK;
+}
+#endif
 
 static ngx_int_t
 ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
@@ -849,9 +907,19 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
     entry->dir = ngx_is_dir(&fi);
     entry->mtime = ngx_file_mtime(&fi);
     entry->size = ngx_file_size(&fi);
+
     entry->st_uid = ngx_file_uid(&fi);
     entry->st_gid = ngx_file_gid(&fi);
     entry->st_mode = ngx_file_mode(&fi);
+#ifdef HAVE_LINUX_XATTRS
+    rc = ngx_http_dav_get_xattr(r, path.data, entry);
+    if (rc != NGX_OK) {
+        /* log error and return stats from inode */
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, ngx_errno,
+                      ngx_open_dir_n " \"%s\" xattr failed", path.data);
+        rc = NGX_OK;
+    }
+#endif
 
     if (ngx_http_dav_ext_set_locks(r, entry) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -967,9 +1035,19 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
         entry->dir = ngx_de_is_dir(&dir);
         entry->mtime = ngx_de_mtime(&dir);
         entry->size = ngx_de_size(&dir);
+
         entry->st_uid = ngx_de_uid(&dir);
         entry->st_gid = ngx_de_gid(&dir);
         entry->st_mode = ngx_de_mode(&dir);
+#ifdef HAVE_LINUX_XATTRS
+        rc = ngx_http_dav_get_xattr(r, filename, entry);
+        if (rc != NGX_OK) {
+            /* log error and return stats from inode */
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, ngx_errno,
+                          ngx_open_dir_n " \"%s\" xattr failed", filename);
+            rc = NGX_OK;
+        }
+#endif
 
         if (ngx_http_dav_ext_set_locks(r, entry) != NGX_OK) {
             rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
