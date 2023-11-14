@@ -771,7 +771,7 @@ ngx_http_dav_get_xattr(ngx_http_request_t *r, u_char *path, ngx_http_dav_ext_ent
 {
     ssize_t                   xrc;
     char                      xattr_buf[256];
-    void                      *xattr_ptr = xattr_buf;
+    char                      *xattr_ptr = xattr_buf;
     unsigned int              mode;
     int                       rdev_major, rdev_minor, uid, gid;
 
