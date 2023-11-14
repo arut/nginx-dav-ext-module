@@ -795,7 +795,7 @@ ngx_http_dav_get_xattr(ngx_http_request_t *r, u_char *path, ngx_http_dav_ext_ent
         return NGX_ERROR;
     }
 
-    xattr_ptr[xrc + 1] = 0;
+    xattr_ptr[xrc] = 0;
 
     if (sscanf(xattr_ptr, "%o %d,%d %d:%d",
                &mode, &rdev_major, &rdev_minor, &uid, &gid) != 5) {
