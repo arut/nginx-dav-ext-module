@@ -775,11 +775,11 @@ ngx_http_dav_get_xattr(ngx_http_request_t *r, u_char *path, ngx_http_dav_ext_ent
     unsigned int              mode;
     int                       rdev_major, rdev_minor, uid, gid;
 
-    xrc = lgetxattr((const char*)path, XSTAT_ATTR, xattr_buf, sizeof(xattr_buf));
+    xrc = lgetxattr((const char*)path, XSTAT_ATTR, xattr_buf, sizeof(xattr_buf) - 1);
     if (xrc == -1) {
         if (errno == ERANGE) {
             xrc = lgetxattr((const char*)path, XSTAT_ATTR, xattr_ptr, 0);
-            xattr_ptr = ngx_pnalloc(r->pool, xrc);
+            xattr_ptr = ngx_pnalloc(r->pool, xrc + 1);
             if (xattr_ptr == NULL) {
                 ngx_log_error(NGX_LOG_ALERT, r->connection->log, ngx_errno,
                               ngx_de_info_n " \"%s\" failed: no memory", path);
@@ -794,6 +794,8 @@ ngx_http_dav_get_xattr(ngx_http_request_t *r, u_char *path, ngx_http_dav_ext_ent
                       ngx_de_info_n " \"%s\" rsync xattrs failed", path);
         return NGX_ERROR;
     }
+
+    xattr_ptr[xrc + 1] = 0;
 
     if (sscanf(xattr_ptr, "%o %d,%d %d:%d",
                &mode, &rdev_major, &rdev_minor, &uid, &gid) != 5) {
