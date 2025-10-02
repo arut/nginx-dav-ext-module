@@ -128,8 +128,11 @@ static char *ngx_http_dav_ext_lock_zone(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 static char *ngx_http_dav_ext_lock(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
+static ngx_int_t ngx_http_dav_ext_variable_document_root(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v);
 static ngx_int_t ngx_http_dav_ext_init(ngx_conf_t *cf);
-
+static int ngx_http_dav_ext_is_path_prefix(const char *root, const char *path);
+static char* ngx_http_dav_ext_get_link_target(char * filename);
 
 static ngx_conf_bitmask_t  ngx_http_dav_ext_methods_mask[] = {
     { ngx_string("off"),      NGX_HTTP_DAV_EXT_OFF },
@@ -737,6 +740,9 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
     ngx_array_t                entries;
     ngx_file_info_t            fi;
     ngx_http_dav_ext_entry_t  *entry;
+    ngx_http_core_loc_conf_t  *clcf;
+    
+    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 
     if (ngx_array_init(&entries, r->pool, 40, sizeof(ngx_http_dav_ext_entry_t))
         != NGX_OK)
@@ -895,6 +901,64 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
 
             ngx_cpystrn(last, name.data, name.len + 1);
 
+
+            ngx_file_info_t fi;
+            if (ngx_link_info(filename, &fi) == NGX_OK) {
+                if (ngx_is_link(&fi)) {
+                    if (clcf->disable_symlinks == NGX_DISABLE_SYMLINKS_ON) {
+                        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                            "symlinks disabled, skipping %s", filename);
+                        entries.nelts--;
+                        continue;
+                    } else {
+                        
+                        ngx_file_info_t target_fi;
+                        if (ngx_file_info(filename, &target_fi) != NGX_OK) {
+                            ngx_log_error(NGX_LOG_NOTICE, r->connection->log, ngx_errno,
+                                "broken symbolic link %s, skipping", filename);
+                            entries.nelts--;
+                            continue;
+                        }
+
+                        if (clcf->disable_symlinks != NGX_DISABLE_SYMLINKS_ON) {
+                            if (clcf->disable_symlinks == NGX_DISABLE_SYMLINKS_NOTOWNER) {
+                                ngx_http_variable_value_t expanded_root;
+                                ngx_int_t root_exists = ngx_http_dav_ext_variable_document_root(r, &expanded_root) == NGX_OK;
+                                if (!root_exists) {
+                                    ngx_log_error(NGX_LOG_WARN, r->connection->log, ngx_errno,
+                                        "root is not specified when disable_symlinks if_not_owner, skipping %s", filename); 
+                                    entries.nelts--;
+                                    continue;
+                                } else {
+                                    char* target = ngx_http_dav_ext_get_link_target((char*)filename);   
+                                    if (target == NULL) {
+                                        ngx_log_error(NGX_LOG_WARN, r->connection->log, ngx_errno,
+                                            "failed to get target link, skipping %s", filename);  
+                                        entries.nelts--;
+                                        continue;
+                                    }
+                                    int is_under_root = ngx_http_dav_ext_is_path_prefix((char*)expanded_root.data, target);
+                                    if (!is_under_root) {
+                                        ngx_log_error(NGX_LOG_NOTICE, r->connection->log, ngx_errno,
+                                            "target of link %s->%s is not under root: %s, skipping", filename, target, expanded_root.data); 
+                                        free(target);
+                                        entries.nelts--;
+                                        continue;
+                                    }
+                                    free(target);
+                                }
+
+                            } else {
+                                ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                                    "symbolic links are not disabled, indexing %s", filename);
+                            }
+                        
+                        }
+                    } 
+                }
+            }
+
+
             if (ngx_de_info(filename, &dir) == NGX_FILE_ERROR) {
                 ngx_log_error(NGX_LOG_CRIT, r->connection->log, ngx_errno,
                               ngx_de_info_n " \"%s\" failed", filename);
@@ -958,6 +1022,85 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
     return ngx_http_dav_ext_propfind_response(r, &entries, props);
 }
 
+static char* ngx_http_dav_ext_get_link_target(char *filename) {
+    char *link_target = (char *)malloc(NGX_MAX_PATH);
+    if (link_target == NULL) {
+        return NULL;
+    }
+
+    ssize_t len = readlink(filename, link_target, NGX_MAX_PATH - 1);
+    
+    if (len == -1) {
+        free(link_target);
+        return NULL;
+    }
+    
+    link_target[len] = '\0';
+
+    return link_target;
+}
+
+static int ngx_http_dav_ext_is_path_prefix(const char *root, const char *path) {
+    size_t root_len = strlen(root);
+    size_t path_len = strlen(path);
+    
+    if (root_len > path_len) {
+        return 0;
+    }
+    
+    if (strncmp(root, path, root_len) != 0) {
+        return 0;
+    }
+    
+    if (root_len == path_len || path[root_len] == '/' || 
+        (root_len == 1 && root[0] == '/')) {
+        return 1;
+    }
+    
+    return 0;
+}
+
+static ngx_int_t
+ngx_http_dav_ext_variable_document_root(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v)
+{
+    ngx_str_t                  path;
+    ngx_http_core_loc_conf_t  *clcf;
+
+    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+
+    if (clcf->root_lengths == NULL) {
+        v->len = clcf->root.len;
+        v->valid = 1;
+        v->no_cacheable = 0;
+        v->not_found = 0;
+        v->data = clcf->root.data;
+
+    } else {
+        
+        if (ngx_http_script_run(r, &path, clcf->root_lengths->elts, 0,
+                                clcf->root_values->elts)
+            == NULL)
+        {
+            return NGX_ERROR;
+        }
+
+        u_char *clean_data = ngx_pnalloc(r->pool, path.len + 1);
+        if (clean_data == NULL) {
+            return NGX_ERROR;
+        }
+        ngx_memcpy(clean_data, path.data, path.len);
+        clean_data[path.len] = '\0';
+
+        v->len = path.len;
+        v->valid = 1;
+        v->no_cacheable = 0;
+        v->not_found = 0;
+        v->data = clean_data;
+    }
+
+    return NGX_OK;
+}
 
 static ngx_int_t
 ngx_http_dav_ext_set_locks(ngx_http_request_t *r,
