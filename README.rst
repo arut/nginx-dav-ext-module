@@ -17,6 +17,31 @@ For full WebDAV_ support in nginx_ you need to enable the standard
 ngx_http_dav_module_ as well as this module for the missing methods.
 
 
+Pre-built Packages
+==================
+
+Pre-built packages for this module are freely available from the GetPageSpeed
+repository for Ubuntu and Debian::
+
+    # Install the repository keyring
+    sudo install -d -m 0755 /etc/apt/keyrings
+    curl -fsSL https://extras.getpagespeed.com/deb-archive-keyring.gpg \
+      | sudo tee /etc/apt/keyrings/getpagespeed.gpg >/dev/null
+
+    # Add the repository (Ubuntu example)
+    echo "deb [signed-by=/etc/apt/keyrings/getpagespeed.gpg] \
+      https://extras.getpagespeed.com/ubuntu jammy main" \
+      | sudo tee /etc/apt/sources.list.d/getpagespeed-extras.list
+
+    # Install nginx and the module
+    sudo apt-get update
+    sudo apt-get install nginx nginx-module-dav-ext
+
+The module is automatically enabled after installation.
+Supported distributions include Debian 12/13 and Ubuntu 20.04/22.04/24.04.
+See `the complete setup instructions <https://apt-nginx-extras.getpagespeed.com/apt-setup/>`_.
+
+
 Build
 =====
 
