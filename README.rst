@@ -114,6 +114,114 @@ Note that even though this directive enables locking capabilities in the
 current scope, HTTP methods LOCK and UNLOCK should also be explicitly specified
 in the ``dav_ext_methods``.
 
+dav_chmod
+---------
+
+========== ====
+*Syntax:*  ``dav_chmod mode``
+*Default:* ``-`` (no change)
+*Context:* http, server, location
+========== ====
+
+Sets the file permissions (mode) for files uploaded via WebDAV (PUT, MKCOL).
+The mode can be specified in decimal or octal format (prefixed with 0).
+
+Examples::
+
+    dav_chmod 0640;   # rw-r----- (owner: rw, group: r, others: none)
+    dav_chmod 0660;   # rw-rw---- (owner: rw, group: rw, others: none)
+    dav_chmod 644;    # decimal equivalent of 0644
+
+.. note::
+   This directive does NOT require root privileges and works with normal nginx workers.
+
+dav_chown_user
+--------------
+
+========== ====
+*Syntax:*  ``dav_chown_user username``
+*Default:* ``-`` (no change)
+*Context:* http, server, location
+========== ====
+
+Sets the owner (user) for files uploaded via WebDAV (PUT, MKCOL).
+
+.. warning::
+   **SECURITY WARNING**: This directive requires nginx workers to run as ``root``.
+   Running nginx workers as root is **NOT RECOMMENDED** for production servers exposed to the Internet.
+   
+   For most use cases, prefer using ``dav_chmod`` with group permissions (setgid on the directory)
+   instead of changing the file owner.
+
+dav_chown_group
+---------------
+
+========== ====
+*Syntax:*  ``dav_chown_group groupname``
+*Default:* ``-`` (no change)
+*Context:* http, server, location
+========== ====
+
+Sets the group for files uploaded via WebDAV (PUT, MKCOL).
+
+.. warning::
+   **SECURITY WARNING**: This directive requires nginx workers to run as ``root``.
+   Running nginx workers as root is **NOT RECOMMENDED** for production servers exposed to the Internet.
+   
+   A safer alternative: Use ``dav_chmod 0660`` and set the setgid bit on the directory::
+   
+       sudo chgrp desired_group /path/to/webdav/root
+       sudo chmod g+s /path/to/webdav/root
+
+dav_chown_group
+------------
+
+========== ====
+*Syntax:*  ``dav_chown_group value=user``
+*Context:* http, server, location
+========== ====
+
+Enables chown, requires running nginx as root (NOT RECOMENDED)
+
+Security Considerations
+=======================
+
+Minimizing Privileges
+---------------------
+
+The principle of least privilege states that processes should run with the minimum
+privileges necessary to function.
+
+- **For dav_chmod only**: nginx workers can run as a normal unprivileged user (``www-data``, ``nginx``, ``httpd``, etc.)
+- **For dav_chown_* directives**: nginx workers MUST run as ``root``, which significantly increases security risk
+
+Recommended approach for most deployments
+------------------------------------------
+
+1. Use only ``dav_chmod`` with appropriate group permissions
+2. Set the setgid bit on the WebDAV root directory: ``chmod g+s /path/to/webdav``
+3. Ensure the nginx worker user and the target user share a common group
+4. Use ACLs (``setfacl``) for more granular permissions if needed
+
+Example of secure setup without chown::
+
+    # Create shared group
+    sudo groupadd webdav
+    
+    # Add users to group
+    sudo usermod -aG webdav www-data
+    sudo usermod -aG webdav youruser
+    
+    # Configure directory
+    sudo mkdir -p /data/webdav
+    sudo chgrp webdav /data/webdav
+    sudo chmod 2770 /data/webdav  # setgid + rwx for group
+    
+    # Nginx configuration
+    location / {
+        dav_chmod 0660;
+        # No dav_chown_user/group needed
+    }
 
 Example 1
 =========
@@ -180,6 +288,44 @@ WebDAV with locking which works with MacOS client::
             }
         }
     }
+
+Example 4
+=========
+WebDAV with automatic permission setting (recommended)::
+
+    location / {
+        root /data/www;
+
+        dav_methods PUT DELETE MKCOL COPY MOVE;
+        dav_ext_methods PROPFIND OPTIONS;
+        
+        # Set permissions to rw-rw---- (660) for uploaded files
+        dav_chmod 0660;
+    }
+
+This example will automatically apply ``chmod 0660`` to every file uploaded via WebDAV, making them readable and writable by the owner and group.
+
+Example 5
+=========
+WebDAV with ownership change (ADVANCED - Requires nginx workers to run as root)::
+
+    location / {
+        root /data/www;
+
+        dav_methods PUT DELETE MKCOL COPY MOVE;
+        dav_ext_methods PROPFIND OPTIONS;
+        
+        # Change owner and group of uploaded files
+        dav_chown_user www-data;
+        dav_chown_group webgroup;
+    }
+
+.. warning::
+   Using ``dav_chown_user`` or ``dav_chown_group`` requires nginx workers to run as ``root``, 
+   which is **NOT RECOMMENDED** for production servers exposed to the Internet. 
+   Consider using only ``dav_chmod`` with proper group permissions (``setgid`` on the directory) 
+   as a safer alternative.
+    
 
 .. _ngx_http_dav_module: http://nginx.org/en/docs/http/ngx_http_dav_module.html
 .. _nginx-tests: http://hg.nginx.org/nginx-tests
