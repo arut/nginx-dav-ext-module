@@ -502,8 +502,16 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
         }
 
         ngx_str_set(&h->key, "DAV");
-        h->value.len = 1;
-        h->value.data = (u_char *) (dlcf->shm_zone ? "2" : "1");
+
+        if (dlcf->shm_zone) {
+            h->value.len = 3;
+            h->value.data = (u_char *) "1,2";
+        }
+        else {
+            h->value.len = 1;
+            h->value.data = (u_char *) "1";
+        }
+
         h->hash = 1;
 
         h = ngx_list_push(&r->headers_out.headers);
@@ -862,7 +870,7 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
         name.len = ngx_de_namelen(&dir);
         name.data = ngx_de_name(&dir);
 
-        if (name.data[0] == '.') {
+        if ((name.len == 1 && name.data[0] == '.') || (name.len == 2 && name.data[0] == '.' && name.data[1] == '.')) {
             continue;
         }
 
@@ -896,10 +904,9 @@ ngx_http_dav_ext_propfind(ngx_http_request_t *r, ngx_uint_t props)
             ngx_cpystrn(last, name.data, name.len + 1);
 
             if (ngx_de_info(filename, &dir) == NGX_FILE_ERROR) {
-                ngx_log_error(NGX_LOG_CRIT, r->connection->log, ngx_errno,
+                ngx_log_error(NGX_LOG_ERR, r->connection->log, ngx_errno,
                               ngx_de_info_n " \"%s\" failed", filename);
-                rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
-                break;
+                continue;
             }
         }
 
@@ -1350,7 +1357,7 @@ ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r)
 
     if (node == NULL || node->token != token) {
         ngx_shmtx_unlock(&lock->shpool->mutex);
-        return NGX_HTTP_NO_CONTENT;
+        return NGX_HTTP_PRECONDITION_FAILED;
     }
 
     ngx_queue_remove(&node->queue);
