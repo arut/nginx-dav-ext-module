@@ -52,6 +52,32 @@ typedef struct {
 } ngx_http_dav_ext_xml_ctx_t;
 
 
+/*
+ * PROPPATCH: dead properties are not stored. Every requested property
+ * is answered "403 Forbidden" inside a 207 Multi-Status, which is what Windows
+ * Explorer (WebClient) needs to go on after PUT. Replaces the PR #64 handler,
+ * which crashed the worker on whitespace text or unprefixed XML (NULL deref).
+ */
+
+#define NGX_HTTP_DAV_EXT_PROPPATCH_MAX            256
+
+typedef struct {
+    ngx_str_t                    ns;
+    ngx_str_t                    name;
+} ngx_http_dav_ext_pp_prop_t;
+
+
+typedef struct {
+    ngx_http_request_t          *request;
+    ngx_array_t                 *props;
+    ngx_uint_t                   depth;
+    unsigned                     root:1;
+    unsigned                     in_setremove:1;
+    unsigned                     in_prop:1;
+    unsigned                     error:1;
+} ngx_http_dav_ext_pp_ctx_t;
+
+
 typedef struct {
     ngx_uint_t                   methods;
     ngx_shm_zone_t              *shm_zone;
@@ -107,6 +133,15 @@ static ngx_int_t ngx_http_dav_ext_lock_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_dav_ext_lock_response(ngx_http_request_t *r,
     ngx_uint_t status, time_t timeout, ngx_uint_t depth, uint32_t token);
 static ngx_int_t ngx_http_dav_ext_unlock_handler(ngx_http_request_t *r);
+static void ngx_http_dav_ext_proppatch_handler(ngx_http_request_t *r);
+static void ngx_http_dav_ext_proppatch_xml_start(void *data,
+    const xmlChar *localname, const xmlChar *prefix, const xmlChar *uri,
+    int nb_namespaces, const xmlChar **namespaces, int nb_attributes,
+    int nb_defaulted, const xmlChar **attributes);
+static void ngx_http_dav_ext_proppatch_xml_end(void *data,
+    const xmlChar *localname, const xmlChar *prefix, const xmlChar *uri);
+static ngx_int_t ngx_http_dav_ext_proppatch_response(ngx_http_request_t *r,
+    ngx_array_t *props);
 
 static ngx_int_t ngx_http_dav_ext_depth(ngx_http_request_t *r,
     ngx_int_t default_depth);
@@ -134,6 +169,7 @@ static ngx_int_t ngx_http_dav_ext_init(ngx_conf_t *cf);
 static ngx_conf_bitmask_t  ngx_http_dav_ext_methods_mask[] = {
     { ngx_string("off"),      NGX_HTTP_DAV_EXT_OFF },
     { ngx_string("propfind"), NGX_HTTP_PROPFIND    },
+    { ngx_string("proppatch"), NGX_HTTP_PROPPATCH  },
     { ngx_string("options"),  NGX_HTTP_OPTIONS     },
     { ngx_string("lock"),     NGX_HTTP_LOCK        },
     { ngx_string("unlock"),   NGX_HTTP_UNLOCK      },
@@ -485,6 +521,19 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
 
         return NGX_DONE;
 
+    case NGX_HTTP_PROPPATCH:
+
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "http dav_ext proppatch");
+
+        rc = ngx_http_read_client_request_body(r,
+                                           ngx_http_dav_ext_proppatch_handler);
+        if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+            return rc;
+        }
+
+        return NGX_DONE;
+
     case NGX_HTTP_OPTIONS:
 
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -513,8 +562,13 @@ ngx_http_dav_ext_content_handler(ngx_http_request_t *r)
 
         /* XXX */
         ngx_str_set(&h->key, "Allow");
-        ngx_str_set(&h->value,
-           "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,PROPFIND,OPTIONS,LOCK,UNLOCK");
+        if (dlcf->methods & NGX_HTTP_PROPPATCH) {
+            ngx_str_set(&h->value, "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,"
+                                   "PROPFIND,PROPPATCH,OPTIONS,LOCK,UNLOCK");
+        } else {
+            ngx_str_set(&h->value, "GET,HEAD,PUT,DELETE,MKCOL,COPY,MOVE,"
+                                   "PROPFIND,OPTIONS,LOCK,UNLOCK");
+        }
         h->hash = 1;
 
         r->headers_out.status = NGX_HTTP_OK;
@@ -1065,6 +1119,329 @@ ngx_http_dav_ext_propfind_response(ngx_http_request_t *r, ngx_array_t *entries,
     }
 
     b->last = ngx_cpymem(b->last, tail, sizeof(tail) - 1);
+
+    b->last_buf = (r == r->main) ? 1 : 0;
+    b->last_in_chain = 1;
+
+    cl.buf = b;
+    cl.next = NULL;
+
+    r->headers_out.status = 207;
+    ngx_str_set(&r->headers_out.status_line, "207 Multi-Status");
+
+    r->headers_out.content_length_n = b->last - b->pos;
+
+    r->headers_out.content_type_len = sizeof("text/xml") - 1;
+    ngx_str_set(&r->headers_out.content_type, "text/xml");
+    r->headers_out.content_type_lowcase = NULL;
+
+    ngx_str_set(&r->headers_out.charset, "utf-8");
+
+    rc = ngx_http_send_header(r);
+
+    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
+        return rc;
+    }
+
+    return ngx_http_output_filter(r, &cl);
+}
+
+
+static void
+ngx_http_dav_ext_proppatch_handler(ngx_http_request_t *r)
+{
+    off_t                       len;
+    ngx_buf_t                  *b;
+    ngx_err_t                   err;
+    ngx_str_t                   path;
+    ngx_chain_t                *cl;
+    xmlSAXHandler               sax;
+    ngx_file_info_t             fi;
+    xmlParserCtxtPtr            pctx;
+    ngx_http_dav_ext_pp_ctx_t   xctx;
+    size_t                      root;
+    int                         well_formed;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "http dav_ext proppatch handler");
+
+    if (ngx_http_map_uri_to_path(r, &path, &root, 0) == NULL) {
+        ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    if (ngx_file_info(path.data, &fi) == NGX_FILE_ERROR) {
+        err = ngx_errno;
+        ngx_http_finalize_request(r, (err == NGX_ENOENT || err == NGX_ENOTDIR)
+                                     ? NGX_HTTP_NOT_FOUND
+                                     : NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    ngx_memzero(&xctx, sizeof(ngx_http_dav_ext_pp_ctx_t));
+    xctx.request = r;
+    xctx.props = ngx_array_create(r->pool, 8,
+                                  sizeof(ngx_http_dav_ext_pp_prop_t));
+    if (xctx.props == NULL) {
+        ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    ngx_memzero(&sax, sizeof(xmlSAXHandler));
+    sax.initialized = XML_SAX2_MAGIC;
+    sax.startElementNs = ngx_http_dav_ext_proppatch_xml_start;
+    sax.endElementNs = ngx_http_dav_ext_proppatch_xml_end;
+    /* no characters handler: text content is ignored entirely */
+
+    pctx = xmlCreatePushParserCtxt(&sax, &xctx, NULL, 0, NULL);
+    if (pctx == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "xmlCreatePushParserCtxt() failed");
+        ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    xmlCtxtUseOptions(pctx, XML_PARSE_NONET);  /* never fetch external entities */
+
+    len = 0;
+
+    for (cl = r->request_body ? r->request_body->bufs : NULL; cl;
+         cl = cl->next)
+    {
+        b = cl->buf;
+
+        if (b->in_file) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "PROPPATCH client body is in file, "
+                          "you may want to increase client_body_buffer_size");
+            xmlFreeParserCtxt(pctx);
+            ngx_http_finalize_request(r, NGX_HTTP_REQUEST_ENTITY_TOO_LARGE);
+            return;
+        }
+
+        if (ngx_buf_special(b)) {
+            continue;
+        }
+
+        len += b->last - b->pos;
+
+        if (xmlParseChunk(pctx, (const char *) b->pos, b->last - b->pos, 0)) {
+            break;
+        }
+    }
+
+    /* terminate exactly once, whether or not a last_buf was seen */
+    if (len) {
+        (void) xmlParseChunk(pctx, NULL, 0, 1);
+    }
+
+    well_formed = pctx->wellFormed;
+    xmlFreeParserCtxt(pctx);
+
+    if (len == 0 || !well_formed || !xctx.root || xctx.error) {
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                      "PROPPATCH rejected: %s",
+                      len == 0 ? "empty body"
+                      : !well_formed ? "malformed XML"
+                      : !xctx.root ? "no DAV:propertyupdate root"
+                      : "too many properties");
+        ngx_http_finalize_request(r, NGX_HTTP_BAD_REQUEST);
+        return;
+    }
+
+    ngx_http_finalize_request(r,
+                              ngx_http_dav_ext_proppatch_response(r, xctx.props));
+}
+
+
+static void
+ngx_http_dav_ext_proppatch_xml_start(void *data, const xmlChar *localname,
+    const xmlChar *prefix, const xmlChar *uri, int nb_namespaces,
+    const xmlChar **namespaces, int nb_attributes, int nb_defaulted,
+    const xmlChar **attributes)
+{
+    ngx_http_dav_ext_pp_ctx_t *xctx = data;
+
+    size_t                       n;
+    ngx_uint_t                   dav;
+    ngx_http_dav_ext_pp_prop_t  *prop;
+
+    xctx->depth++;
+
+    dav = (uri != NULL && ngx_strcmp(uri, "DAV:") == 0);
+
+    switch (xctx->depth) {
+
+    case 1:
+        if (dav && ngx_strcmp(localname, "propertyupdate") == 0) {
+            xctx->root = 1;
+        }
+        break;
+
+    case 2:
+        if (xctx->root && dav && (ngx_strcmp(localname, "set") == 0
+                                  || ngx_strcmp(localname, "remove") == 0))
+        {
+            xctx->in_setremove = 1;
+        }
+        break;
+
+    case 3:
+        if (xctx->in_setremove && dav && ngx_strcmp(localname, "prop") == 0) {
+            xctx->in_prop = 1;
+        }
+        break;
+
+    case 4:
+        if (!xctx->in_prop || xctx->error) {
+            break;
+        }
+
+        if (xctx->props->nelts >= NGX_HTTP_DAV_EXT_PROPPATCH_MAX) {
+            xctx->error = 1;
+            break;
+        }
+
+        prop = ngx_array_push(xctx->props);
+        if (prop == NULL) {
+            xctx->error = 1;
+            break;
+        }
+
+        /* copy: libxml2 strings die with the parser context */
+
+        n = ngx_strlen(localname);
+        prop->name.data = ngx_pnalloc(xctx->request->pool, n);
+        if (prop->name.data == NULL) {
+            xctx->error = 1;
+            break;
+        }
+        ngx_memcpy(prop->name.data, localname, n);
+        prop->name.len = n;
+
+        n = uri ? ngx_strlen(uri) : 0;
+        prop->ns.len = n;
+        prop->ns.data = NULL;
+
+        if (n) {
+            prop->ns.data = ngx_pnalloc(xctx->request->pool, n);
+            if (prop->ns.data == NULL) {
+                xctx->error = 1;
+                break;
+            }
+            ngx_memcpy(prop->ns.data, uri, n);
+        }
+
+        break;
+    }
+}
+
+
+static void
+ngx_http_dav_ext_proppatch_xml_end(void *data, const xmlChar *localname,
+    const xmlChar *prefix, const xmlChar *uri)
+{
+    ngx_http_dav_ext_pp_ctx_t *xctx = data;
+
+    if (xctx->depth == 3) {
+        xctx->in_prop = 0;
+
+    } else if (xctx->depth == 2) {
+        xctx->in_setremove = 0;
+    }
+
+    if (xctx->depth) {
+        xctx->depth--;
+    }
+}
+
+
+static ngx_int_t
+ngx_http_dav_ext_proppatch_response(ngx_http_request_t *r, ngx_array_t *props)
+{
+    u_char                      *p, *uri;
+    size_t                       len, ulen;
+    uintptr_t                    escape;
+    ngx_buf_t                   *b;
+    ngx_int_t                    rc;
+    ngx_uint_t                   n;
+    ngx_chain_t                  cl;
+    ngx_http_dav_ext_pp_prop_t  *prop;
+
+    static u_char head[] =
+        "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
+        "<D:multistatus xmlns:D=\"DAV:\">\n"
+        "<D:response>\n"
+        "<D:href>";
+
+    static u_char head_end[] = "</D:href>\n";
+
+    static u_char ps_head[] = "<D:propstat><D:prop><P:";
+    static u_char ps_ns[] = " xmlns:P=\"";
+    static u_char ps_tail[] =
+        "\"/></D:prop><D:status>HTTP/1.1 403 Forbidden</D:status>"
+        "</D:propstat>\n";
+    static u_char ps_nons_head[] = "<D:propstat><D:prop><";
+    static u_char ps_nons_tail[] =
+        " xmlns=\"\"/></D:prop><D:status>HTTP/1.1 403 Forbidden</D:status>"
+        "</D:propstat>\n";
+
+    static u_char tail[] = "</D:response>\n</D:multistatus>\n";
+
+    /* href: URI-escape, then XML-escape (same as PROPFIND) */
+
+    escape = 2 * ngx_escape_uri(NULL, r->uri.data, r->uri.len, NGX_ESCAPE_URI);
+    uri = ngx_pnalloc(r->pool, r->uri.len + escape);
+    if (uri == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+    ulen = (u_char *) ngx_escape_uri(uri, r->uri.data, r->uri.len,
+                                     NGX_ESCAPE_URI) - uri;
+
+    len = sizeof(head) - 1 + ulen + ngx_escape_html(NULL, uri, ulen)
+          + sizeof(head_end) - 1 + sizeof(tail) - 1;
+
+    prop = props->elts;
+
+    for (n = 0; n < props->nelts; n++) {
+        if (prop[n].ns.len) {
+            len += sizeof(ps_head) - 1 + prop[n].name.len
+                   + sizeof(ps_ns) - 1
+                   + prop[n].ns.len
+                   + ngx_escape_html(NULL, prop[n].ns.data, prop[n].ns.len)
+                   + sizeof(ps_tail) - 1;
+        } else {
+            len += sizeof(ps_nons_head) - 1 + prop[n].name.len
+                   + sizeof(ps_nons_tail) - 1;
+        }
+    }
+
+    b = ngx_create_temp_buf(r->pool, len);
+    if (b == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    p = ngx_cpymem(b->last, head, sizeof(head) - 1);
+    p = (u_char *) ngx_escape_html(p, uri, ulen);
+    p = ngx_cpymem(p, head_end, sizeof(head_end) - 1);
+
+    for (n = 0; n < props->nelts; n++) {
+        /* local names are XML NCNames (parser-validated): no escaping needed */
+        if (prop[n].ns.len) {
+            p = ngx_cpymem(p, ps_head, sizeof(ps_head) - 1);
+            p = ngx_cpymem(p, prop[n].name.data, prop[n].name.len);
+            p = ngx_cpymem(p, ps_ns, sizeof(ps_ns) - 1);
+            p = (u_char *) ngx_escape_html(p, prop[n].ns.data, prop[n].ns.len);
+            p = ngx_cpymem(p, ps_tail, sizeof(ps_tail) - 1);
+        } else {
+            p = ngx_cpymem(p, ps_nons_head, sizeof(ps_nons_head) - 1);
+            p = ngx_cpymem(p, prop[n].name.data, prop[n].name.len);
+            p = ngx_cpymem(p, ps_nons_tail, sizeof(ps_nons_tail) - 1);
+        }
+    }
+
+    p = ngx_cpymem(p, tail, sizeof(tail) - 1);
+    b->last = p;
 
     b->last_buf = (r == r->main) ? 1 : 0;
     b->last_in_chain = 1;
