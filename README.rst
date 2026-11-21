@@ -2,7 +2,7 @@
 nginx-dav-ext-module
 ********************
 
-nginx_ WebDAV_ PROPFIND,OPTIONS,LOCK,UNLOCK support.
+nginx_ WebDAV_ PROPFIND,PROPPATCH,OPTIONS,LOCK,UNLOCK support.
 
 .. contents::
 
@@ -79,11 +79,18 @@ dav_ext_methods
 ---------------
 
 ========== ====
-*Syntax:*  ``dav_ext_methods [PROPFIND] [OPTIONS] [LOCK] [UNLOCK]``
+*Syntax:*  ``dav_ext_methods [PROPFIND] [PROPPATCH] [OPTIONS] [LOCK] [UNLOCK]``
 *Context:* http, server, location
 ========== ====
 
 Enables support for the specified WebDAV methods in the current scope.
+
+PROPPATCH does not store dead properties.
+The request body is validated and every property it names is reported back
+as ``403 Forbidden`` in a ``207 Multi-Status`` response, as RFC 4918 allows.
+This is enough for clients that only need the method to exist, notably the
+Windows WebDAV redirector, which sends PROPPATCH with Win32 timestamps after
+every PUT and gives up on the copy if the server answers 405.
 
 dav_ext_lock_zone
 -----------------
